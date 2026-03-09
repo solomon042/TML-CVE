@@ -544,6 +544,7 @@
             background: rgba(255,255,255,0.08);
             border-radius: 8px;
             padding: 6px 14px;
+            position: relative;
         }
         .ai-toggle-group label {
             color: #e5e7eb;
@@ -558,6 +559,81 @@
         }
         .ai-status-dot.on  { background: #34d399; box-shadow: 0 0 0 3px rgba(52,211,153,0.3); }
         .ai-status-dot.off { background: #6b7280; }
+
+        /* ── AI PROVIDER DROPDOWN PANEL ── */
+        .ai-provider-btn {
+            background: rgba(255,255,255,0.12);
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 6px;
+            color: #e2e8f0;
+            font-size: 0.78rem;
+            font-weight: 600;
+            padding: 3px 10px 3px 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            transition: background 0.15s;
+            white-space: nowrap;
+        }
+        .ai-provider-btn:hover { background: rgba(255,255,255,0.2); }
+        .ai-provider-btn .provider-dot { width:7px;height:7px;border-radius:50%;flex-shrink:0; }
+        .ai-provider-panel {
+            display: none;
+            position: absolute;
+            top: calc(100% + 10px);
+            right: 0;
+            width: 320px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            z-index: 9999;
+            padding: 16px;
+        }
+        .ai-provider-panel.open { display: block; }
+        .ai-provider-panel .panel-title {
+            font-size: 0.72rem; font-weight: 700; color: #64748b;
+            text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px;
+        }
+        .provider-options { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+        .provider-opt {
+            border: 1.5px solid #334155; border-radius: 8px; padding: 7px 10px;
+            cursor: pointer; transition: all 0.15s; background: #0f172a;
+        }
+        .provider-opt:hover { border-color: #3b82f6; background: #1e3a5f; }
+        .provider-opt.active { border-color: #3b82f6; background: #1e3a5f; }
+        .provider-opt .pname { font-size: 0.78rem; font-weight: 700; color: #e2e8f0; }
+        .provider-opt .ptag  { font-size: 0.63rem; font-weight: 600; }
+        .provider-opt .ptag.free { color: #34d399; }
+        .provider-opt .ptag.paid { color: #fbbf24; }
+        .api-key-row { display: flex; gap: 6px; margin-bottom: 8px; }
+        .api-key-row input {
+            flex: 1; background: #0f172a; border: 1px solid #334155; border-radius: 7px;
+            color: #e2e8f0; font-size: 0.78rem; padding: 6px 10px; outline: none; transition: border-color 0.15s;
+        }
+        .api-key-row input:focus { border-color: #3b82f6; }
+        .api-key-row input::placeholder { color: #475569; font-size: 0.72rem; }
+        .api-key-row .eye-btn {
+            background: #0f172a; border: 1px solid #334155; border-radius: 7px;
+            color: #64748b; padding: 0 8px; cursor: pointer; font-size: 0.8rem;
+        }
+        .model-row select {
+            width: 100%; background: #0f172a; border: 1px solid #334155;
+            border-radius: 7px; color: #e2e8f0; font-size: 0.78rem;
+            padding: 6px 10px; outline: none; margin-bottom: 10px;
+        }
+        .btn-apply-ai {
+            width: 100%; background: #3b82f6; color: white; border: none;
+            border-radius: 7px; padding: 7px; font-size: 0.8rem; font-weight: 700;
+            cursor: pointer; transition: background 0.15s;
+        }
+        .btn-apply-ai:hover { background: #2563eb; }
+        .btn-apply-ai:disabled { background: #334155; cursor: not-allowed; }
+        .ai-test-result { margin-top: 8px; font-size: 0.73rem; text-align: center; min-height: 16px; }
+        .ai-test-result.ok  { color: #34d399; }
+        .ai-test-result.err { color: #f87171; }
+        .ai-panel-note { margin-top: 10px; padding-top: 8px; border-top: 1px solid #334155; font-size: 0.68rem; color: #475569; text-align: center; }
 
         /* ── EXPORT BTN ── */
         .export-btn {
@@ -682,18 +758,86 @@
 <!-- ═══ HEADER ═══ -->
 <div class="app-header">
     <div class="brand">
-    <img src="{{ url_for('static', filename='tata-logo.png') }}"
-         alt="Logo"
-         style="height:36px;">
-    <span style="font-size:1.1rem;">TMPVL CVE Monitoring</span>
-</div>
+        <i class="bi bi-shield-shaded"></i>
+        CVE Monitoring Dashboard
+    </div>
     <div class="ai-toggle-group">
-        <span class="ai-status-dot {% if use_ai %}on{% else %}off{% endif %}"></span>
+        <span class="ai-status-dot {% if use_ai %}on{% else %}off{% endif %}" id="aiStatusDot"></span>
         <input class="form-check-input" type="checkbox" id="aiToggle" {% if use_ai %}checked{% endif %} onchange="toggleAI()">
         <label for="aiToggle"><i class="bi bi-robot me-1"></i>AI Enhancement</label>
-        <span style="font-size:0.75rem; color: {% if use_ai %}#34d399{% else %}#9ca3af{% endif %}; font-weight:700;">
+        <span id="aiEnabledLabel" style="font-size:0.75rem; color: {% if use_ai %}#34d399{% else %}#9ca3af{% endif %}; font-weight:700;">
             {{ 'ENABLED' if use_ai else 'DISABLED' }}
         </span>
+
+        <!-- Provider dropdown button -->
+        <button class="ai-provider-btn" id="providerBtn" onclick="toggleProviderPanel(event)">
+            <span class="provider-dot" id="providerDot" style="background:#34d399"></span>
+            <span id="providerBtnLabel">DeepSeek</span>
+            <i class="bi bi-chevron-down" style="font-size:0.6rem;opacity:0.7"></i>
+        </button>
+
+        <!-- Update DB button -->
+        <a href="/update-cve" title="Update CVE Database"
+           style="background:#16a34a;color:white;padding:5px 12px;border-radius:7px;
+                  font-size:0.78rem;font-weight:600;text-decoration:none;
+                  display:inline-flex;align-items:center;gap:5px;margin-right:4px;">
+            <i class="bi bi-cloud-arrow-down"></i>Update DB
+        </a>
+
+        <!-- Admin link -->
+        <a href="/admin" title="Admin Panel"
+           style="color:#94a3b8; font-size:1rem; text-decoration:none;">
+            <i class="bi bi-shield-lock-fill"></i>
+        </a>
+
+        <!-- Inline provider panel -->
+        <div class="ai-provider-panel" id="aiProviderPanel">
+            <div class="panel-title"><i class="bi bi-cpu me-1"></i>AI Provider &amp; API Key</div>
+
+            <!-- Provider selector -->
+            <div class="provider-options" id="providerOptions">
+                <div class="provider-opt active" data-provider="deepseek" data-models='["deepseek-chat","deepseek-reasoner"]' data-placeholder="sk-..." onclick="selectProvider(this)">
+                    <div class="pname">DeepSeek</div>
+                    <div class="ptag free">Free tier</div>
+                </div>
+                <div class="provider-opt" data-provider="openai" data-models='["gpt-4o-mini","gpt-4o","gpt-3.5-turbo"]' data-placeholder="sk-proj-..." onclick="selectProvider(this)">
+                    <div class="pname">OpenAI</div>
+                    <div class="ptag paid">Paid</div>
+                </div>
+                <div class="provider-opt" data-provider="claude" data-models='["claude-3-haiku-20240307","claude-3-5-sonnet-20241022"]' data-placeholder="sk-ant-..." onclick="selectProvider(this)">
+                    <div class="pname">Claude</div>
+                    <div class="ptag paid">Paid</div>
+                </div>
+                <div class="provider-opt" data-provider="ollama" data-models='["llama3.2","llama3.1","mistral","phi3"]' data-placeholder="No key needed" onclick="selectProvider(this)">
+                    <div class="pname">Ollama</div>
+                    <div class="ptag free">Local/Free</div>
+                </div>
+            </div>
+
+            <!-- API key input -->
+            <div class="api-key-row" id="apiKeyRow">
+                <input type="password" id="aiApiKeyInput" placeholder="Paste your API key here"
+                       oninput="onApiKeyChange()">
+                <button class="eye-btn" onclick="toggleKeyVisibility()"><i class="bi bi-eye" id="eyeIcon"></i></button>
+            </div>
+
+            <!-- Model selector -->
+            <div class="model-row">
+                <select id="aiModelSelect">
+                    <option value="deepseek-chat">deepseek-chat</option>
+                    <option value="deepseek-reasoner">deepseek-reasoner</option>
+                </select>
+            </div>
+
+            <!-- Apply button -->
+            <button class="btn-apply-ai" id="applyAiBtn" onclick="applyAiSettings()">
+                <span id="applyBtnText"><i class="bi bi-check-lg me-1"></i>Apply &amp; Test</span>
+            </button>
+            <div class="ai-test-result" id="aiTestResult"></div>
+            <div class="ai-panel-note">
+                <i class="bi bi-shield-lock me-1"></i>Key stored in session only — never saved to server
+            </div>
+        </div>
     </div>
 </div>
 
@@ -769,9 +913,10 @@
         <div class="tab-content">
             <!-- Single Keyword -->
             <div class="tab-pane fade {% if request.args.get('tab') not in ['bom','multi'] %}show active{% endif %}" id="single" role="tabpanel">
-                <form method="get" action="/" id="singleSearchForm">
+                <form method="post" action="/search" id="singleSearchForm">
                     <input type="hidden" name="tab" value="single">
                     <input type="hidden" name="use_ai" value="{{ 'true' if use_ai else 'false' }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <div class="row g-3 align-items-end">
                         <div class="col-md-5">
                             <label class="form-label fw-semibold" style="font-size:0.83rem;">Search Keyword</label>
@@ -802,6 +947,7 @@
             <div class="tab-pane fade {% if request.args.get('tab') == 'bom' %}show active{% endif %}" id="bom" role="tabpanel">
                 <form method="post" enctype="multipart/form-data" action="/upload-bom" id="bomForm">
                     <input type="hidden" name="use_ai_bom" value="{{ 'true' if use_ai else 'false' }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <div class="row g-4">
                         <div class="col-md-7">
                             <div class="upload-zone" onclick="document.getElementById('bom-file').click()">
@@ -836,8 +982,10 @@
 
             <!-- Multi Keyword -->
             <div class="tab-pane fade {% if request.args.get('tab') == 'multi' %}show active{% endif %}" id="multi" role="tabpanel">
-                <form method="post" action="/multi-keyword" id="multiForm">
-                    <input type="hidden" name="use_ai_multi" value="{{ 'true' if use_ai else 'false' }}">
+                <form method="post" action="/search" id="multiForm">
+                    <input type="hidden" name="use_ai" value="{{ 'true' if use_ai else 'false' }}">
+                    <input type="hidden" name="tab" value="multi">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <div class="row g-4">
                         <div class="col-md-7">
                             <label class="form-label fw-semibold" style="font-size:0.83rem;">Keywords (one per line)</label>
@@ -1363,10 +1511,13 @@ function filterIndustry(industry, btn) {
 }
 
 // ── DB STATS (keyword-aware) ───────────────────────────────────
+// Keywords injected server-side — no URL decoding needed
+const PAGE_KEYWORDS = {{ active_keywords | tojson }};
+const PAGE_SEVERITY = {{ severity_filter | tojson }};
+
 async function fetchStats() {
-    const params = new URLSearchParams(window.location.search);
-    const keywords = params.get('keywords') || params.get('keyword') || '';
-    const severity  = params.get('severity') || '';
+    const keywords = PAGE_KEYWORDS.join(',');
+    const severity  = PAGE_SEVERITY || '';
 
     try {
         // Always fetch date range from full /stats endpoint
@@ -1422,7 +1573,7 @@ async function fetchStats() {
         } else {
             ctxEl.style.display  = 'none';
             lblTotal.textContent = 'Total CVEs';
-            lblSev.textContent   = 'Severity';
+            lblSev.textContent   = 'Severity (All CVEs)';
             const card = document.getElementById('totalCard');
             if (card) card.style.borderLeft = '';
         }
@@ -1436,10 +1587,172 @@ async function fetchStats() {
 function toggleAI() {
     const on = document.getElementById('aiToggle').checked;
     const url = new URL(window.location.href);
-    url.searchParams.delete('ai');
     url.searchParams.set('use_ai', on ? 'true' : 'false');
     url.searchParams.delete('page');
     window.location.href = url.toString();
+}
+
+// ── AI PROVIDER PANEL ─────────────────────────────────────────
+
+const PROVIDER_COLORS = {
+    deepseek: '#34d399',
+    openai:   '#a78bfa',
+    claude:   '#f97316',
+    ollama:   '#38bdf8',
+};
+
+// Load saved settings from localStorage on page load
+(function initProviderUI() {
+    const saved = getSavedAI();
+    if (saved.provider) {
+        const opt = document.querySelector(`[data-provider="${saved.provider}"]`);
+        if (opt) activateProviderOpt(opt, false);
+    }
+    if (saved.key) {
+        const inp = document.getElementById('aiApiKeyInput');
+        if (inp) inp.value = saved.key;
+    }
+    if (saved.model) {
+        const sel = document.getElementById('aiModelSelect');
+        if (sel) { for (let o of sel.options) { if (o.value === saved.model) o.selected = true; } }
+    }
+    updateProviderBtn(saved.provider || 'deepseek');
+})();
+
+function getSavedAI() {
+    try {
+        return JSON.parse(localStorage.getItem('cve_ai_settings') || '{}');
+    } catch(e) { return {}; }
+}
+
+function saveAItoStorage(provider, key, model) {
+    localStorage.setItem('cve_ai_settings', JSON.stringify({ provider, key, model }));
+}
+
+function toggleProviderPanel(e) {
+    e.stopPropagation();
+    const panel = document.getElementById('aiProviderPanel');
+    panel.classList.toggle('open');
+}
+
+// Close panel on outside click
+document.addEventListener('click', function(e) {
+    const panel = document.getElementById('aiProviderPanel');
+    const btn   = document.getElementById('providerBtn');
+    if (panel && !panel.contains(e.target) && e.target !== btn && !btn.contains(e.target)) {
+        panel.classList.remove('open');
+    }
+});
+
+function selectProvider(el) {
+    activateProviderOpt(el, true);
+}
+
+function activateProviderOpt(el, resetKey) {
+    document.querySelectorAll('.provider-opt').forEach(o => o.classList.remove('active'));
+    el.classList.add('active');
+
+    const provider     = el.dataset.provider;
+    const models       = JSON.parse(el.dataset.models || '[]');
+    const placeholder  = el.dataset.placeholder || 'API key';
+    const isOllama     = provider === 'ollama';
+
+    // Update key input
+    const keyRow = document.getElementById('apiKeyRow');
+    const keyInp = document.getElementById('aiApiKeyInput');
+    keyRow.style.opacity    = isOllama ? '0.4' : '1';
+    keyInp.disabled         = isOllama;
+    keyInp.placeholder      = isOllama ? 'No API key needed for Ollama' : placeholder;
+    if (resetKey && !isOllama) keyInp.value = '';
+
+    // Update model dropdown
+    const sel = document.getElementById('aiModelSelect');
+    sel.innerHTML = '';
+    const saved = getSavedAI();
+    models.forEach(m => {
+        const o = document.createElement('option');
+        o.value = m; o.textContent = m;
+        if (m === saved.model) o.selected = true;
+        sel.appendChild(o);
+    });
+
+    updateProviderBtn(provider);
+    document.getElementById('aiTestResult').textContent = '';
+    document.getElementById('aiTestResult').className = 'ai-test-result';
+}
+
+function updateProviderBtn(provider) {
+    const labels = { deepseek:'DeepSeek', openai:'OpenAI', claude:'Claude', ollama:'Ollama (Local)' };
+    const dot    = document.getElementById('providerDot');
+    const lbl    = document.getElementById('providerBtnLabel');
+    if (dot) dot.style.background = PROVIDER_COLORS[provider] || '#94a3b8';
+    if (lbl) lbl.textContent = labels[provider] || provider;
+}
+
+function toggleKeyVisibility() {
+    const inp  = document.getElementById('aiApiKeyInput');
+    const icon = document.getElementById('eyeIcon');
+    if (inp.type === 'password') {
+        inp.type = 'text';
+        icon.className = 'bi bi-eye-slash';
+    } else {
+        inp.type = 'password';
+        icon.className = 'bi bi-eye';
+    }
+}
+
+function onApiKeyChange() {
+    document.getElementById('aiTestResult').textContent = '';
+}
+
+async function applyAiSettings() {
+    const provider = document.querySelector('.provider-opt.active')?.dataset.provider || 'deepseek';
+    const api_key  = document.getElementById('aiApiKeyInput').value.trim();
+    const model    = document.getElementById('aiModelSelect').value;
+    const btn      = document.getElementById('applyAiBtn');
+    const result   = document.getElementById('aiTestResult');
+
+    if (provider !== 'ollama' && !api_key) {
+        result.textContent = '⚠ Please enter your API key';
+        result.className   = 'ai-test-result err';
+        return;
+    }
+
+    btn.disabled = true;
+    document.getElementById('applyBtnText').innerHTML =
+        '<span class="spinner-border spinner-border-sm me-1" style="width:.75rem;height:.75rem"></span>Testing...';
+    result.textContent = '';
+
+    try {
+        const resp = await fetch('/settings/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, api_key, model })
+        });
+        const data = await resp.json();
+
+        if (data.ok) {
+            result.textContent = '✓ ' + data.message;
+            result.className   = 'ai-test-result ok';
+            saveAItoStorage(provider, api_key, model);
+            updateProviderBtn(provider);
+            // Auto-close panel after success
+            setTimeout(() => {
+                document.getElementById('aiProviderPanel').classList.remove('open');
+                result.textContent = '';
+            }, 2000);
+        } else {
+            result.textContent = '✗ ' + data.message;
+            result.className   = 'ai-test-result err';
+        }
+    } catch(e) {
+        result.textContent = '✗ Connection error';
+        result.className   = 'ai-test-result err';
+    }
+
+    btn.disabled = false;
+    document.getElementById('applyBtnText').innerHTML =
+        '<i class="bi bi-check-lg me-1"></i>Apply &amp; Test';
 }
 
 // ── KEYWORD REMOVE ────────────────────────────────────────────
@@ -1599,6 +1912,7 @@ async function runLazyAI() {
 
         try {
             const resp = await fetch('/api/ai-analyze', {
+              credentials: 'include',  // CRITICAL: send session cookie so server can read API key
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ cves: batch })
@@ -1671,6 +1985,43 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+});
+
+// Check if AI key is configured — show banner if not
+async function checkAiKeyStatus() {
+    try {
+        const r = await fetch('/api/ai-status', {credentials: 'include'});
+        const d = await r.json();
+        if (!d.has_key && d.ai_enabled) {
+            const banner = document.createElement('div');
+            banner.id = 'aiKeyBanner';
+            banner.innerHTML = `
+              <div style="position:fixed;bottom:16px;right:16px;background:#1e293b;color:#f1f5f9;
+                           padding:14px 18px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.4);
+                           z-index:9999;max-width:320px;font-size:.83rem;border-left:4px solid #f59e0b">
+                <div style="font-weight:700;margin-bottom:4px">
+                  <i class="bi bi-exclamation-triangle-fill" style="color:#f59e0b"></i>
+                  No AI API Key Set
+                </div>
+                <div style="color:#94a3b8;margin-bottom:10px">
+                  AI summaries are unavailable. Add your ${d.provider} API key to enable AI analysis.
+                </div>
+                <a href="/settings" style="background:#3b82f6;color:white;padding:6px 14px;
+                    border-radius:7px;text-decoration:none;font-weight:600;font-size:.8rem">
+                  ⚙️ Add API Key
+                </a>
+                <button onclick="document.getElementById('aiKeyBanner').remove()"
+                  style="background:transparent;border:none;color:#64748b;margin-left:8px;
+                         cursor:pointer;font-size:1rem">✕</button>
+              </div>`;
+            document.body.appendChild(banner);
+        }
+    } catch(e) {}
+}
+document.addEventListener('DOMContentLoaded', () => {
+    // Only check if AI is enabled on page
+    const aiToggle = document.getElementById('aiToggle');
+    if (aiToggle && aiToggle.checked) checkAiKeyStatus();
 });
 </script>
 </body>
