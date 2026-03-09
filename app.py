@@ -19,7 +19,6 @@ import secrets
 from datetime import timedelta
 import threading
 from collections import deque
-import boto3
 import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import Json
@@ -33,11 +32,12 @@ app = Flask(__name__)
 # Database paths - use /tmp for Koyeb (writable)
 DB = os.environ.get('CVE_DB_PATH', '/tmp/nvd_database.db')
 
-# Backblaze B2 Configuration
-B2_KEY_ID = os.environ.get('B2_KEY_ID', '')
-B2_APP_KEY = os.environ.get('B2_APP_KEY', '')
-B2_BUCKET = os.environ.get('B2_BUCKET', '')
-B2_ENDPOINT = os.environ.get('B2_ENDPOINT', 's3.us-west-002.backblazeb2.com')
+# GitHub Release Configuration (replaces Backblaze)
+# These are public values - safe to hardcode as defaults
+# You can override them with environment variables in Koyeb if needed
+GITHUB_REPO = os.environ.get('GITHUB_REPO', 'solomon042/TML-CVE')  # Your GitHub username/repo
+GITHUB_TAG = os.environ.get('GITHUB_TAG', 'v1.0.0')                 # Your release tag
+GITHUB_ASSET = os.environ.get('GITHUB_ASSET', 'nvd_database.db')    # Your database filename
 
 # Neon PostgreSQL Configuration
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
@@ -58,46 +58,54 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 ALLOWED_EXTENSIONS = {'txt', 'csv', 'json', 'xml', 'xlsx', 'xls'}
 
 # ============================================================
-# BACKBLAZE B2 HELPER (Download CVE Database)
+# GITHUB RELEASE HELPER (Download CVE Database)
 # ============================================================
 
-def download_cve_from_backblaze():
-    """Download CVE database from Backblaze B2 on startup"""
-    if not all([B2_KEY_ID, B2_APP_KEY, B2_BUCKET]):
-        print("⚠️ Backblaze credentials not fully configured")
-        return False
-    
-    # Skip if already downloaded and file exists
+def download_cve_from_github():
+    """Download CVE database from GitHub Releases"""
     if os.path.exists(DB):
         size_mb = os.path.getsize(DB) / (1024 * 1024)
         print(f"✅ CVE database already exists ({size_mb:.1f} MB)")
         return True
     
-    print("📥 Connecting to Backblaze B2...")
+    # Construct the download URL from config values
+    download_url = f"https://github.com/{GITHUB_REPO}/releases/download/{GITHUB_TAG}/{GITHUB_ASSET}"
+    print(f"📥 Downloading from GitHub: {download_url}")
+    
     try:
-        # Create S3 client for Backblaze
-        s3_client = boto3.client(
-            's3',
-            endpoint_url=f"https://{B2_ENDPOINT}",
-            aws_access_key_id=B2_KEY_ID,
-            aws_secret_access_key=B2_APP_KEY
-        )
+        # Stream download with progress
+        response = requests.get(download_url, stream=True)
+        response.raise_for_status()
         
-        print(f"📥 Downloading CVE database from bucket: {B2_BUCKET}")
+        # Get total file size for progress tracking
+        total_size = int(response.headers.get('content-length', 0))
+        downloaded = 0
         
-        # Download the file
-        s3_client.download_file(
-            B2_BUCKET,
-            'nvd_database.db',
-            DB
-        )
+        with open(DB, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total_size:
+                        percent = int((downloaded / total_size) * 100)
+                        if percent % 10 == 0:  # Print every 10%
+                            print(f"\r   Progress: {percent}%", end='', flush=True)
         
         size_mb = os.path.getsize(DB) / (1024 * 1024)
-        print(f"✅ Database downloaded successfully: {size_mb:.1f} MB")
+        print(f"\n✅ Downloaded successfully: {size_mb:.1f} MB")
         return True
         
+    except requests.exceptions.HTTPError as e:
+        if response.status_code == 404:
+            print(f"❌ File not found. Check your GitHub repo/tag/filename:")
+            print(f"   Repo: {GITHUB_REPO}")
+            print(f"   Tag: {GITHUB_TAG}")
+            print(f"   Asset: {GITHUB_ASSET}")
+        else:
+            print(f"❌ HTTP error: {e}")
+        return False
     except Exception as e:
-        print(f"❌ Failed to download database: {e}")
+        print(f"❌ Download failed: {e}")
         return False
 
 # ============================================================
@@ -224,8 +232,8 @@ def get_ai_from_postgres(ip_address, cve_id):
 # DOWNLOAD DATABASE ON STARTUP
 # ============================================================
 
-# Download CVE database from Backblaze
-download_cve_from_backblaze()
+# Download CVE database from GitHub Releases
+download_cve_from_github()
 
 # Initialize PostgreSQL
 init_postgres()
@@ -273,7 +281,7 @@ def security_checks():
     if _is_rate_limited(ip, max_req=limit, window=60):
         return jsonify({"error": "Too many requests. Please slow down."}), 429
 
-    # Block obviously malicious paths
+    # Block malicious paths
     bad_patterns = ['../', '.env', 'wp-admin', 'phpmyadmin', '.git', 'etc/passwd']
     path_lower = request.path.lower()
     if any(p in path_lower for p in bad_patterns):
@@ -2120,7 +2128,7 @@ def update_db():
         start_index  = 0
         results_per  = 2000
         total_results = None
-        added = updated = skipped = 0
+        added = updated = 0
 
         conn   = sqlite3.connect(DB)
         cursor = conn.cursor()
@@ -2706,7 +2714,7 @@ if __name__ == "__main__":
     print(f"💾 AI Cache:  {'ON' if USE_AI_CACHE else 'OFF'}")
     print(f"📅 Date col:  {DATE_COLUMN}")
     print(f"🔐 Admin:     /admin  (user: {ADMIN_USERNAME})")
-    print(f"📦 Backblaze: {'Configured' if B2_KEY_ID and B2_APP_KEY and B2_BUCKET else 'Not configured'}")
+    print(f"📦 GitHub:    {GITHUB_REPO} / {GITHUB_TAG}")
     print(f"🐘 PostgreSQL: {'Connected' if postgres_pool else 'Not connected'}")
 
     try:
