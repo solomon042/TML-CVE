@@ -35,7 +35,7 @@ DB = os.environ.get('CVE_DB_PATH', '/tmp/nvd_database.db')
 # GitHub Release Configuration (replaces Backblaze)
 # These are public values - safe to hardcode as defaults
 # You can override them with environment variables in Koyeb if needed
-GITHUB_REPO = os.environ.get('GITHUB_REPO', 'solomon042/TML-CVE')  # Your GitHub username/repo
+GITHUB_REPO = os.environ.get('GITHUB_REPO', 'solomon042/TML-CVE-Dashboard')  # Your GitHub username/repo
 GITHUB_TAG = os.environ.get('GITHUB_TAG', 'v1.0.0')                 # Your release tag
 GITHUB_ASSET = os.environ.get('GITHUB_ASSET', 'nvd_database.db')    # Your database filename
 
