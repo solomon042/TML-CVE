@@ -76,43 +76,6 @@
             font-weight: 600;
         }
 
-        /* BOM Cards */
-        .bom-section {
-            background: white;
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 20px;
-        }
-        .bom-title {
-            font-weight: 700;
-            margin-bottom: 12px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .bom-card {
-            background: var(--surface-2);
-            border-left: 4px solid var(--primary);
-            border-radius: 0 8px 8px 0;
-            padding: 12px;
-            margin-bottom: 10px;
-        }
-        .bom-card .email {
-            color: var(--primary);
-            font-weight: 600;
-        }
-        .keyword-badge {
-            background: white;
-            border: 1px solid var(--border);
-            color: var(--text);
-            font-size: 0.75rem;
-            padding: 4px 10px;
-            border-radius: 20px;
-            display: inline-block;
-            margin: 2px;
-        }
-
         /* Stat Cards */
         .stat-strip {
             display: flex;
@@ -308,14 +271,6 @@
             border-radius: 8px;
             cursor: pointer;
         }
-        .footer {
-            margin-top: 30px;
-            padding: 20px;
-            text-align: center;
-            color: var(--text-muted);
-            font-size: 0.85rem;
-            border-top: 1px solid var(--border);
-        }
     </style>
 </head>
 <body>
@@ -326,12 +281,9 @@
         CVE Monitoring Dashboard
     </div>
     <div>
-        <span class="badge bg-success me-2">
-            <i class="bi bi-robot"></i> AI Enabled
-        </span>
-        <span class="badge bg-info">
-            <i class="bi bi-envelope"></i> Alerts Active
-        </span>
+        <a href="/upload-bom" class="btn btn-outline" style="color: white; border-color: white;">
+            <i class="bi bi-upload"></i> Upload BOM
+        </a>
     </div>
 </div>
 
@@ -341,11 +293,9 @@
     <div class="alert-banner">
         <span>
             <i class="bi bi-megaphone"></i>
-            Daily updates run at 2:00 AM UTC. Last update: <span id="lastUpdate">Today</span>
+            Daily updates run at 2:00 AM UTC. Last update: {{ last_update|default('Today') }}
         </span>
-        <a href="#" onclick="refreshData()">
-            <i class="bi bi-arrow-repeat"></i> Refresh
-        </a>
+        <a href="/upload-bom"><i class="bi bi-bell"></i> Subscribe for alerts</a>
     </div>
 
     <!-- Stats Cards -->
@@ -360,7 +310,7 @@
         <div class="stat-card">
             <div class="stat-icon green"><i class="bi bi-calendar-check"></i></div>
             <div>
-                <div class="stat-label">New (7 days)</div>
+                <div class="stat-label">New (24h)</div>
                 <div class="stat-value" id="newCount">—</div>
             </div>
         </div>
@@ -372,47 +322,11 @@
             </div>
         </div>
         <div class="stat-card">
-            <div class="stat-icon purple"><i class="bi bi-envelope"></i></div>
+            <div class="stat-icon purple"><i class="bi bi-bell"></i></div>
             <div>
                 <div class="stat-label">Active BOMs</div>
-                <div class="stat-value" id="bomCount">{{ env_boms|length if env_boms else '0' }}</div>
+                <div class="stat-value" id="bomCount">—</div>
             </div>
-        </div>
-    </div>
-
-    <!-- BOM Configuration Section (Environment Variables) -->
-    <div class="bom-section">
-        <div class="bom-title">
-            <i class="bi bi-gear text-primary"></i>
-            Active BOM Configurations (from Environment Variables)
-        </div>
-        <div id="bomList">
-            {% if env_boms and env_boms|length > 0 %}
-                {% for bom in env_boms %}
-                <div class="bom-card">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <div>
-                            <span class="email"><i class="bi bi-envelope"></i> {{ bom.email }}</span>
-                            <span class="badge bg-primary ms-2">{{ bom.name }}</span>
-                        </div>
-                        <span class="badge bg-info">{{ bom.keywords|length }} keywords</span>
-                    </div>
-                    <div class="mt-2">
-                        {% for keyword in bom.keywords[:10] %}
-                        <span class="keyword-badge">{{ keyword }}</span>
-                        {% endfor %}
-                        {% if bom.keywords|length > 10 %}
-                        <span class="keyword-badge">+{{ bom.keywords|length - 10 }} more</span>
-                        {% endif %}
-                    </div>
-                </div>
-                {% endfor %}
-            {% else %}
-                <div class="alert alert-warning">
-                    <i class="bi bi-exclamation-triangle"></i>
-                    No BOMs configured. Add BOM_KEYWORDS_1, BOM_EMAIL_1, etc. to environment variables.
-                </div>
-            {% endif %}
         </div>
     </div>
 
@@ -423,10 +337,7 @@
             Recent Alerts (Last 24h)
         </div>
         <div id="recentAlerts">
-            <div class="text-center py-3">
-                <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-                Loading alerts...
-            </div>
+            <div class="text-muted text-center py-3">Loading alerts...</div>
         </div>
     </div>
 
@@ -443,10 +354,10 @@
                     <div class="col-md-4">
                         <select name="severity" class="form-select">
                             <option value="">All Severities</option>
-                            <option value="Critical">Critical (9.0-10.0)</option>
-                            <option value="High">High (7.0-8.9)</option>
-                            <option value="Medium">Medium (4.0-6.9)</option>
-                            <option value="Low">Low (0.1-3.9)</option>
+                            <option value="Critical">Critical</option>
+                            <option value="High">High</option>
+                            <option value="Medium">Medium</option>
+                            <option value="Low">Low</option>
                         </select>
                     </div>
                     <div class="col-md-2">
@@ -463,7 +374,7 @@
     {% if active_keywords %}
     <div class="kw-strip">
         <i class="bi bi-tags text-primary"></i>
-        <span style="font-weight:700;">Active Search:</span>
+        <span style="font-weight:700;">Active:</span>
         {% for kw in active_keywords %}
         <span class="badge bg-primary me-1">{{ kw }}</span>
         {% endfor %}
@@ -479,10 +390,9 @@
                 Latest CVEs
                 <span class="badge bg-secondary ms-2">{{ cves|length }}</span>
             </h5>
-            <small class="text-muted">Showing most recent vulnerabilities</small>
         </div>
         {% if active_keywords %}
-        <a href="/export?keywords={{ active_keywords|join(',') }}" class="btn btn-success btn-sm">
+        <a href="/export?keywords={{ active_keywords|join(',') }}" class="btn btn-success">
             <i class="bi bi-download"></i> Export CSV
         </a>
         {% endif %}
@@ -505,8 +415,7 @@
                     {% for cve in cves %}
                     <tr>
                         <td>
-                            <a href="https://nvd.nist.gov/vuln/detail/{{ cve.cve_id }}" target="_blank" 
-                               style="font-family: var(--mono); font-weight: 600; color: var(--primary);">
+                            <a href="https://nvd.nist.gov/vuln/detail/{{ cve.cve_id }}" target="_blank">
                                 {{ cve.cve_id }}
                             </a>
                             {% if cve.is_new %}
@@ -514,37 +423,26 @@
                             {% endif %}
                         </td>
                         <td>
-                            {% if cve.cvss_score %}
                             <span class="cvss-val 
-                                {% if cve.cvss_score|float >= 9 %}crit
-                                {% elif cve.cvss_score|float >= 7 %}high
-                                {% elif cve.cvss_score|float >= 4 %}med
+                                {% if cve.cvss_score and cve.cvss_score|float >= 9 %}crit
+                                {% elif cve.cvss_score and cve.cvss_score|float >= 7 %}high
+                                {% elif cve.cvss_score and cve.cvss_score|float >= 4 %}med
                                 {% else %}low{% endif %}">
-                                {{ "%.1f"|format(cve.cvss_score|float) }}
+                                {{ "%.1f"|format(cve.cvss_score|float) if cve.cvss_score else 'N/A' }}
                             </span>
-                            {% else %}
-                            <span class="text-muted">N/A</span>
-                            {% endif %}
                         </td>
                         <td>
                             <span class="severity-badge {{ cve.severity }}">
                                 {{ cve.severity }}
                             </span>
                         </td>
-                        <td style="font-family: monospace; color: var(--text-muted);">
+                        <td style="font-family: monospace;">
                             {{ cve.published_date[:10] if cve.published_date else 'N/A' }}
                         </td>
                         <td>
-                            <div style="max-height: 100px; overflow-y: auto; font-size: 0.8rem; line-height: 1.4;">
-                                {{ cve.description[:250] + '...' if cve.description and cve.description|length > 250 else cve.description }}
+                            <div style="max-height: 100px; overflow-y: auto;">
+                                {{ cve.description[:200] + '...' if cve.description else 'No description' }}
                             </div>
-                            {% if cve.matched_keywords %}
-                            <div class="mt-1">
-                                {% for kw in cve.matched_keywords[:3] %}
-                                <span class="badge bg-light text-dark border">{{ kw }}</span>
-                                {% endfor %}
-                            </div>
-                            {% endif %}
                         </td>
                     </tr>
                     {% else %}
@@ -552,7 +450,7 @@
                         <td colspan="5" class="text-center py-5">
                             <i class="bi bi-inbox fs-1 d-block mb-3 text-muted"></i>
                             <h5 class="text-muted">No CVEs Found</h5>
-                            <p class="text-muted">Try different keywords or check back later</p>
+                            <p class="text-muted">Try different keywords or upload a BOM file</p>
                         </td>
                     </tr>
                     {% endfor %}
@@ -566,56 +464,38 @@
     <nav class="mt-4">
         <ul class="pagination justify-content-center">
             <li class="page-item {% if page == 1 %}disabled{% endif %}">
-                <a class="page-link" href="?page={{ page-1 }}{% if active_keywords %}&keywords={{ active_keywords|join(',') }}{% endif %}">
-                    <i class="bi bi-chevron-left"></i> Previous
-                </a>
+                <a class="page-link" href="?page={{ page-1 }}&keywords={{ active_keywords|join(',') }}">Previous</a>
             </li>
             {% for p in range(1, total_pages + 1) %}
                 {% if p >= page-2 and p <= page+2 %}
                 <li class="page-item {% if p == page %}active{% endif %}">
-                    <a class="page-link" href="?page={{ p }}{% if active_keywords %}&keywords={{ active_keywords|join(',') }}{% endif %}">{{ p }}</a>
+                    <a class="page-link" href="?page={{ p }}&keywords={{ active_keywords|join(',') }}">{{ p }}</a>
                 </li>
                 {% endif %}
             {% endfor %}
             <li class="page-item {% if page == total_pages %}disabled{% endif %}">
-                <a class="page-link" href="?page={{ page+1 }}{% if active_keywords %}&keywords={{ active_keywords|join(',') }}{% endif %}">
-                    Next <i class="bi bi-chevron-right"></i>
-                </a>
+                <a class="page-link" href="?page={{ page+1 }}&keywords={{ active_keywords|join(',') }}">Next</a>
             </li>
         </ul>
     </nav>
     {% endif %}
 
-    <!-- Footer -->
-    <div class="footer">
-        <p class="mb-0">
-            <i class="bi bi-shield-check text-success"></i>
-            Daily CVE updates at 2:00 AM UTC • 
-            <i class="bi bi-envelope text-primary"></i>
-            Email alerts active for {{ env_boms|length if env_boms else '0' }} BOMs
-        </p>
-    </div>
-
 </div>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    loadStats();
+    // Load stats
+    fetchStats();
     loadRecentAlerts();
-    updateTimestamp();
+    loadBomCount();
 });
 
-function loadStats() {
+function fetchStats() {
     fetch('/stats')
         .then(r => r.json())
         .then(data => {
-            if (data.critical) document.getElementById('criticalCount').textContent = data.critical;
-        })
-        .catch(err => console.log('Stats not available yet'));
-    
-    // Count NEW badges
-    const newCount = document.querySelectorAll('.new-badge').length;
-    document.getElementById('newCount').textContent = newCount;
+            document.getElementById('criticalCount').textContent = data.critical || 0;
+        });
 }
 
 function loadRecentAlerts() {
@@ -623,59 +503,42 @@ function loadRecentAlerts() {
         .then(r => r.json())
         .then(alerts => {
             const container = document.getElementById('recentAlerts');
-            
-            if (!alerts || alerts.length === 0) {
-                container.innerHTML = '<div class="text-muted text-center py-3">No alerts in last 24 hours</div>';
+            if (alerts.length === 0) {
+                container.innerHTML = '<div class="text-muted text-center py-2">No alerts in last 24h</div>';
                 return;
             }
             
             let html = '';
             alerts.forEach(alert => {
                 const date = new Date(alert.sent_at);
-                const timeStr = date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-                const dateStr = date.toLocaleDateString();
-                
+                const timeStr = date.toLocaleTimeString();
                 html += `
                     <div class="alert-item">
-                        <div class="d-flex justify-content-between">
-                            <strong>${alert.cve_id}</strong>
-                            <span class="badge bg-info">${alert.keyword}</span>
-                        </div>
-                        <div class="small">
-                            <i class="bi bi-envelope"></i> ${alert.email}
-                            <span class="badge bg-secondary">${alert.bom_name || 'BOM'}</span>
-                        </div>
-                        <div class="time text-end">
-                            <i class="bi bi-clock"></i> ${dateStr} ${timeStr}
-                        </div>
+                        <strong>${alert.cve_id}</strong> 
+                        <span class="badge bg-info">${alert.keyword}</span>
+                        <br>
+                        <small>${alert.email} - ${alert.bom_name}</small>
+                        <span class="time float-end">${timeStr}</span>
                     </div>
                 `;
             });
             container.innerHTML = html;
-        })
-        .catch(err => {
-            document.getElementById('recentAlerts').innerHTML = 
-                '<div class="text-muted text-center py-3">Unable to load alerts</div>';
         });
 }
 
-function updateTimestamp() {
-    const now = new Date();
-    const options = { 
-        year: 'numeric', month: 'short', day: 'numeric',
-        hour: '2-digit', minute: '2-digit'
-    };
-    document.getElementById('lastUpdate').textContent = now.toLocaleDateString('en-US', options);
+function loadBomCount() {
+    fetch('/api/boms')
+        .then(r => r.json())
+        .then(boms => {
+            document.getElementById('bomCount').textContent = boms.length;
+        });
 }
 
-function refreshData() {
-    location.reload();
-}
-
-// Auto-refresh every 5 minutes (optional)
+// NEW count calculation
 setTimeout(() => {
-    location.reload();
-}, 300000);
+    const newBadges = document.querySelectorAll('.new-badge').length;
+    document.getElementById('newCount').textContent = newBadges;
+}, 500);
 </script>
 
 </body>
