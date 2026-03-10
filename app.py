@@ -67,7 +67,7 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 ALLOWED_EXTENSIONS = {'txt', 'csv', 'json', 'xml', 'xlsx', 'xls'}
 
 # ============================================================
-# LOAD BOMS FROM ENVIRONMENT VARIABLES (NEW!)
+# LOAD BOMS FROM ENVIRONMENT VARIABLES
 # ============================================================
 
 def load_boms_from_env():
@@ -112,20 +112,43 @@ ENV_BOMS = load_boms_from_env()
 
 def download_cve_from_github():
     """Download CVE database from GitHub Releases on startup"""
+    # Check if file exists and has size > 0
     if os.path.exists(DB):
-        size_mb = os.path.getsize(DB) / (1024 * 1024)
-        print(f"✅ CVE database already exists ({size_mb:.1f} MB)")
-        return True
+        file_size = os.path.getsize(DB)
+        if file_size > 1024 * 1024:  # > 1MB
+            size_mb = file_size / (1024 * 1024)
+            print(f"✅ CVE database already exists ({size_mb:.1f} MB)")
+            
+            # Verify it's a valid SQLite database
+            try:
+                test_conn = sqlite3.connect(DB)
+                test_conn.execute("SELECT count(*) FROM cves")
+                test_conn.close()
+                print("✅ Database is valid")
+                return True
+            except Exception as e:
+                print(f"⚠️ Existing database is corrupted, re-downloading: {e}")
+                try:
+                    os.remove(DB)
+                except:
+                    pass
+        else:
+            print(f"⚠️ Existing database is empty ({file_size} bytes), re-downloading")
+            try:
+                os.remove(DB)
+            except:
+                pass
     
     download_url = f"https://github.com/{GITHUB_REPO}/releases/download/{GITHUB_TAG}/{GITHUB_ASSET}"
     print(f"📥 Downloading from GitHub: {download_url}")
     
     try:
-        response = requests.get(download_url, stream=True)
+        response = requests.get(download_url, stream=True, timeout=60)
         response.raise_for_status()
         
         total_size = int(response.headers.get('content-length', 0))
         downloaded = 0
+        last_percent = 0
         
         with open(DB, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
@@ -134,12 +157,24 @@ def download_cve_from_github():
                     downloaded += len(chunk)
                     if total_size:
                         percent = int((downloaded / total_size) * 100)
-                        if percent % 10 == 0:
-                            print(f"\r   Progress: {percent}%", end='', flush=True)
+                        if percent % 10 == 0 and percent > last_percent:
+                            print(f"   Progress: {percent}%")
+                            last_percent = percent
         
         size_mb = os.path.getsize(DB) / (1024 * 1024)
-        print(f"\n✅ Downloaded successfully: {size_mb:.1f} MB")
-        return True
+        print(f"✅ Downloaded successfully: {size_mb:.1f} MB")
+        
+        # Verify downloaded database
+        try:
+            test_conn = sqlite3.connect(DB)
+            test_conn.execute("SELECT count(*) FROM cves")
+            count = test_conn.fetchone()[0]
+            test_conn.close()
+            print(f"✅ Downloaded database is valid with {count} CVEs")
+            return True
+        except Exception as e:
+            print(f"❌ Downloaded database is corrupted: {e}")
+            return False
         
     except requests.exceptions.HTTPError as e:
         if response.status_code == 404:
@@ -171,7 +206,7 @@ def init_postgres():
         postgres_pool = psycopg2.pool.SimpleConnectionPool(1, 20, DATABASE_URL)
         print("✅ PostgreSQL connection pool created")
         
-        # Create all required tables
+        # Create all required tables with IF NOT EXISTS
         conn = postgres_pool.getconn()
         cur = conn.cursor()
         
@@ -193,7 +228,7 @@ def init_postgres():
             )
         """)
         
-        # CVE tracking table for new CVEs
+        # CVE tracking table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS cve_tracking (
                 cve_id TEXT PRIMARY KEY,
@@ -208,7 +243,7 @@ def init_postgres():
             )
         """)
         
-        # Alert history table (for tracking sent emails)
+        # Alert history table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS alert_history (
                 id SERIAL PRIMARY KEY,
@@ -220,7 +255,7 @@ def init_postgres():
             )
         """)
         
-        # Create indexes
+        # Create indexes if they don't exist
         cur.execute("CREATE INDEX IF NOT EXISTS idx_alert_email ON alert_history(email)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_alert_cve ON alert_history(cve_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_tracking_new ON cve_tracking(is_new)")
@@ -260,64 +295,208 @@ def send_email_alert(to_email, subject, html_content):
         print(f"❌ Email send failed: {e}")
         return False
 
-def send_bom_alert(email, bom_name, matches):
-    """Send formatted email for BOM matches"""
+def get_keyword_statistics(keywords):
+    """Get statistics for keywords from SQLite database"""
+    stats = {}
+    try:
+        conn = sqlite3.connect(DB)
+        cursor = conn.cursor()
+        
+        for keyword in keywords:
+            # Get total count
+            cursor.execute("""
+                SELECT COUNT(*) FROM cves 
+                WHERE LOWER(description) LIKE LOWER(?)
+            """, (f'%{keyword}%',))
+            total = cursor.fetchone()[0]
+            
+            # Get severity breakdown
+            cursor.execute("""
+                SELECT 
+                    SUM(CASE WHEN cvss_score >= 9.0 THEN 1 ELSE 0 END) as critical,
+                    SUM(CASE WHEN cvss_score >= 7.0 AND cvss_score < 9.0 THEN 1 ELSE 0 END) as high,
+                    SUM(CASE WHEN cvss_score >= 4.0 AND cvss_score < 7.0 THEN 1 ELSE 0 END) as medium,
+                    SUM(CASE WHEN cvss_score > 0 AND cvss_score < 4.0 THEN 1 ELSE 0 END) as low
+                FROM cves 
+                WHERE LOWER(description) LIKE LOWER(?)
+            """, (f'%{keyword}%',))
+            sev = cursor.fetchone()
+            
+            # Get newly added (last 7 days)
+            cursor.execute("""
+                SELECT COUNT(*) FROM cves 
+                WHERE LOWER(description) LIKE LOWER(?)
+                AND julianday('now') - julianday(published) <= 7
+            """, (f'%{keyword}%',))
+            new_count = cursor.fetchone()[0]
+            
+            stats[keyword] = {
+                'total': total,
+                'critical': sev[0] or 0,
+                'high': sev[1] or 0,
+                'medium': sev[2] or 0,
+                'low': sev[3] or 0,
+                'new': new_count
+            }
+        
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ Could not fetch keyword stats: {e}")
+    
+    return stats
+
+def send_bom_alert(email, bom_name, keywords, matches):
+    """Send formatted email for BOM matches with keyword statistics"""
+    
+    # Get keyword statistics
+    keyword_stats = get_keyword_statistics(keywords)
+    
     subject = f"🚨 CVE Alert: {len(matches)} new vulnerabilities match your BOM '{bom_name}'"
     
-    # Create HTML table for matches
+    # Create keyword statistics table HTML
+    stats_table = ""
+    if keyword_stats:
+        stats_table = """
+            <h3 style="color: #333; margin-top: 25px;">📊 Keyword Statistics (All Time)</h3>
+            <table style="width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px;">
+                <tr style="background-color: #4a5568; color: white;">
+                    <th style="padding: 10px; border: 1px solid #ddd;">Keyword</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">Total</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">Critical</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">High</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">Medium</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">Low</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">New (7d)</th>
+                </tr>
+        """
+        
+        total_all = 0
+        total_crit = 0
+        total_high = 0
+        total_med = 0
+        total_low = 0
+        total_new = 0
+        
+        for keyword, stats in keyword_stats.items():
+            total_all += stats['total']
+            total_crit += stats['critical']
+            total_high += stats['high']
+            total_med += stats['medium']
+            total_low += stats['low']
+            total_new += stats['new']
+            
+            stats_table += f"""
+                <tr style="background-color: {'#f9f9f9' if loop.index % 2 == 0 else 'white'};">
+                    <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">{keyword}</td>
+                    <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">{stats['total']}</td>
+                    <td style="padding: 8px; border: 1px solid #ddd; text-align: center; color: #d9534f; font-weight: bold;">{stats['critical']}</td>
+                    <td style="padding: 8px; border: 1px solid #ddd; text-align: center; color: #f0ad4e; font-weight: bold;">{stats['high']}</td>
+                    <td style="padding: 8px; border: 1px solid #ddd; text-align: center; color: #5bc0de; font-weight: bold;">{stats['medium']}</td>
+                    <td style="padding: 8px; border: 1px solid #ddd; text-align: center; color: #5cb85c; font-weight: bold;">{stats['low']}</td>
+                    <td style="padding: 8px; border: 1px solid #ddd; text-align: center; background-color: #fcf8e3; font-weight: bold;">{stats['new']}</td>
+                </tr>
+            """
+        
+        # Add totals row
+        stats_table += f"""
+                <tr style="background-color: #e2e8f0; font-weight: bold;">
+                    <td style="padding: 10px; border: 1px solid #ddd;">TOTAL</td>
+                    <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">{total_all}</td>
+                    <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #d9534f;">{total_crit}</td>
+                    <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #f0ad4e;">{total_high}</td>
+                    <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #5bc0de;">{total_med}</td>
+                    <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #5cb85c;">{total_low}</td>
+                    <td style="padding: 10px; border: 1px solid #ddd; text-align: center; background-color: #fcf8e3;">{total_new}</td>
+                </tr>
+            </table>
+        """
+    
+    # Create HTML table for today's matches
     matches_html = ""
     for match in matches:
         cve = match["cve"]
-        severity_class = "critical" if cve['cvss_score'] and cve['cvss_score'] >= 9 else "high" if cve['cvss_score'] and cve['cvss_score'] >= 7 else ""
+        severity_color = "#d9534f" if cve['cvss_score'] and cve['cvss_score'] >= 9 else "#f0ad4e" if cve['cvss_score'] and cve['cvss_score'] >= 7 else "#5bc0de" if cve['cvss_score'] and cve['cvss_score'] >= 4 else "#5cb85c"
         
         matches_html += f"""
             <tr>
                 <td style="padding: 10px; border: 1px solid #ddd;">
-                    <a href="https://nvd.nist.gov/vuln/detail/{cve['cve_id']}">{cve['cve_id']}</a>
+                    <a href="https://nvd.nist.gov/vuln/detail/{cve['cve_id']}" style="color: #1a56db;">{cve['cve_id']}</a>
                 </td>
-                <td style="padding: 10px; border: 1px solid #ddd; font-weight: bold; color: {'#d9534f' if cve['cvss_score'] and cve['cvss_score'] >= 9 else '#f0ad4e' if cve['cvss_score'] and cve['cvss_score'] >= 7 else '#5bc0de'};">
+                <td style="padding: 10px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: {severity_color};">
                     {cve['cvss_score'] if cve['cvss_score'] else 'N/A'}
                 </td>
-                <td style="padding: 10px; border: 1px solid #ddd;">{cve.get('severity', 'Unknown')}</td>
-                <td style="padding: 10px; border: 1px solid #ddd;"><strong>{match['keyword']}</strong></td>
+                <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">
+                    <span style="background-color: {severity_color}; color: white; padding: 3px 8px; border-radius: 12px; font-size: 0.8rem;">
+                        {cve.get('severity', 'Unknown')}
+                    </span>
+                </td>
+                <td style="padding: 10px; border: 1px solid #ddd; text-align: center; font-weight: bold; background-color: #f0f7ff;">
+                    {match['keyword']}
+                </td>
                 <td style="padding: 10px; border: 1px solid #ddd;">{cve['description'][:150]}...</td>
             </tr>
         """
     
+    # Complete HTML email
     html = f"""
     <html>
     <head>
         <style>
-            body {{ font-family: Arial, sans-serif; }}
-            .header {{ background-color: #d9534f; color: white; padding: 20px; text-align: center; }}
+            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+            .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }}
+            .stats {{ background-color: #f8f9fa; padding: 15px; margin: 20px 0; border-radius: 8px; }}
             .cve-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-            .cve-table th {{ background-color: #f2f2f2; padding: 10px; border: 1px solid #ddd; }}
-            .footer {{ margin-top: 30px; color: #777; font-size: 12px; text-align: center; }}
+            .cve-table th {{ background-color: #4a5568; color: white; padding: 12px; text-align: left; }}
+            .cve-table td {{ padding: 12px; border: 1px solid #ddd; }}
+            .footer {{ margin-top: 30px; padding: 20px; color: #777; font-size: 12px; text-align: center; border-top: 1px solid #ddd; }}
         </style>
     </head>
     <body>
         <div class="header">
-            <h2>🔔 New CVEs Match Your BOM</h2>
+            <h1 style="margin:0;">🚨 CVE Alert</h1>
+            <p style="margin:5px 0 0; opacity:0.9;">{len(matches)} new vulnerabilities match your BOM</p>
         </div>
         
-        <p><strong>BOM Name:</strong> {bom_name}</p>
-        <p><strong>Matches Found:</strong> {len(matches)}</p>
-        <p><strong>Date:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}</p>
-        
-        <table class="cve-table">
-            <tr>
-                <th>CVE ID</th>
-                <th>CVSS</th>
-                <th>Severity</th>
-                <th>Matched Keyword</th>
-                <th>Description</th>
-            </tr>
-            {matches_html}
-        </table>
-        
-        <div class="footer">
-            <p>This is an automated alert from your CVE Monitoring Dashboard.</p>
-            <p>© {datetime.now().year} CVE Monitoring Dashboard</p>
+        <div style="padding: 20px;">
+            <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                <h3 style="margin-top:0; color:#4a5568;">📋 BOM Summary</h3>
+                <table style="width:100%;">
+                    <tr>
+                        <td><strong>BOM Name:</strong> {bom_name}</td>
+                        <td><strong>Date:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Recipient:</strong> {email}</td>
+                        <td><strong>New Matches:</strong> <span style="color:#d9534f; font-weight:bold;">{len(matches)}</span></td>
+                    </tr>
+                </table>
+            </div>
+            
+            {stats_table}
+            
+            <h3 style="color: #333; margin-top: 30px;">🆕 New CVEs Found Today</h3>
+            <table class="cve-table">
+                <tr>
+                    <th>CVE ID</th>
+                    <th>CVSS</th>
+                    <th>Severity</th>
+                    <th>Matched Keyword</th>
+                    <th>Description</th>
+                </tr>
+                {matches_html}
+            </table>
+            
+            <div style="margin-top: 20px; text-align: center;">
+                <a href="https://nvd.nist.gov" style="background-color: #1a56db; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">View All CVEs</a>
+                <a href="#" style="background-color: #6c757d; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Manage BOMs</a>
+            </div>
+            
+            <div class="footer">
+                <p>This is an automated alert from your CVE Monitoring Dashboard.</p>
+                <p>You received this because your BOM "{bom_name}" contains keywords that match these CVEs.</p>
+                <p>© {datetime.now().year} CVE Monitoring Dashboard</p>
+            </div>
         </div>
     </body>
     </html>
@@ -422,9 +601,9 @@ def fetch_new_cves_from_nvd():
             if new_cves and postgres_pool:
                 update_cve_tracking(new_cves)
             
-            # Check BOMs and send alerts (using ENV BOMs)
+            # Check BOMs and send alerts
             if new_cves:
-                check_env_boms_and_send_alerts(new_cves)
+                check_boms_and_send_alerts(new_cves)
             
             print(f"✅ Daily update complete. Added {len(new_cves)} new CVEs")
             
@@ -462,7 +641,7 @@ def update_cve_tracking(new_cves):
     except Exception as e:
         print(f"❌ Error updating CVE tracking: {e}")
 
-def check_env_boms_and_send_alerts(new_cves):
+def check_boms_and_send_alerts(new_cves):
     """Check environment variable BOMs against new CVEs and send alerts"""
     if not ENV_BOMS:
         print("   No environment BOMs configured")
@@ -494,7 +673,6 @@ def check_env_boms_and_send_alerts(new_cves):
                         cur.execute("""
                             INSERT INTO alert_history (email, cve_id, bom_name, matched_keyword)
                             VALUES (%s, %s, %s, %s)
-                            ON CONFLICT DO NOTHING
                         """, (bom['email'], match['cve']['cve_id'], bom['name'], match['keyword']))
                     conn.commit()
                     cur.close()
@@ -502,8 +680,8 @@ def check_env_boms_and_send_alerts(new_cves):
                 except Exception as e:
                     print(f"   ⚠️ Could not record alert history: {e}")
             
-            # Send email
-            send_bom_alert(bom['email'], bom['name'], matches)
+            # Send email with keyword statistics
+            send_bom_alert(bom['email'], bom['name'], bom['keywords'], matches)
             print(f"   📧 Sent {len(matches)} alerts for {bom['name']}")
 
 # ============================================================
@@ -692,14 +870,16 @@ PROVIDER_INFO = {
 }
 
 # ============================================================
-# DATABASE INITIALIZATION
+# DATABASE INITIALIZATION - FIXED VERSION
 # ============================================================
 
 def init_database():
+    """Initialize SQLite database with required tables."""
     try:
         conn = sqlite3.connect(DB)
         cursor = conn.cursor()
 
+        # Create cves table - IMPORTANT: "references" is a keyword, must be in double quotes
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS cves (
             cve_id TEXT PRIMARY KEY,
@@ -708,11 +888,12 @@ def init_database():
             severity TEXT,
             published TEXT,
             last_modified TEXT,
-            references TEXT,
+            "references" TEXT,
             cwe_id TEXT
         )
         """)
 
+        # Create AI analysis table
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS cve_ai_analysis (
             cve_id TEXT PRIMARY KEY,
@@ -734,21 +915,36 @@ def init_database():
         )
         """)
 
+        # Create indexes
         try:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_cves_published ON cves(published DESC)")
-        except:
-            pass
+        except Exception as e:
+            print(f"⚠️ Index creation warning (published): {e}")
+        
         try:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_cves_cvss_score ON cves(cvss_score)")
-        except:
-            pass
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_analysis_fix_status ON cve_ai_analysis(fix_status)")
+        except Exception as e:
+            print(f"⚠️ Index creation warning (cvss): {e}")
+        
+        try:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_analysis_fix_status ON cve_ai_analysis(fix_status)")
+        except Exception as e:
+            print(f"⚠️ Index creation warning (fix_status): {e}")
+
+        # Verify table was created
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cves'")
+        if cursor.fetchone():
+            print("✅ SQLite cves table ready")
+        else:
+            print("❌ Failed to create cves table")
 
         conn.commit()
         conn.close()
         print("✅ SQLite database initialized")
+        return True
     except Exception as e:
         print(f"⚠️ SQLite init error: {e}")
+        return False
 
 def get_db_connection():
     conn = sqlite3.connect(DB)
@@ -918,66 +1114,80 @@ def index():
     _ai_b = request.args.get("use_ai", "false")
     use_ai = (_ai_a in ("1", "true")) or (_ai_b in ("1", "true"))
 
-    if keywords_param:
-        keywords = [k.strip() for k in keywords_param.split(',') if k.strip()]
-        cves, total = search_cves_by_keywords(keywords, severity_filter, page, use_ai=use_ai)
-        active_keywords = keywords
-    elif search_mode == "single" and keyword:
-        cves, total = search_cves_by_keywords([keyword], severity_filter, page, use_ai=use_ai)
-        active_keywords = [keyword]
-    else:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(f"SELECT * FROM cves ORDER BY {DATE_COLUMN} DESC LIMIT 50")
-        except Exception:
-            cursor.execute("SELECT * FROM cves LIMIT 50")
-        rows = cursor.fetchall()
-        conn.close()
+    try:
+        if keywords_param:
+            keywords = [k.strip() for k in keywords_param.split(',') if k.strip()]
+            cves, total = search_cves_by_keywords(keywords, severity_filter, page, use_ai=use_ai)
+            active_keywords = keywords
+        elif search_mode == "single" and keyword:
+            cves, total = search_cves_by_keywords([keyword], severity_filter, page, use_ai=use_ai)
+            active_keywords = [keyword]
+        else:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute(f"SELECT * FROM cves ORDER BY {DATE_COLUMN} DESC LIMIT 50")
+            except Exception:
+                cursor.execute("SELECT * FROM cves LIMIT 50")
+            rows = cursor.fetchall()
+            conn.close()
 
-        cves = []
-        for row in rows:
-            rd = dict(row)
-            rd["matched_keywords"] = []
-            rd = _enrich_row(rd, use_ai=use_ai)
-            cves.append(rd)
-        active_keywords = []
-        keyword = ""
-        total = len(cves)
+            cves = []
+            for row in rows:
+                rd = dict(row)
+                rd["matched_keywords"] = []
+                rd = _enrich_row(rd, use_ai=use_ai)
+                cves.append(rd)
+            active_keywords = []
+            keyword = ""
+            total = len(cves)
 
-    # Mark new CVEs (from last 7 days)
-    if postgres_pool:
-        try:
-            conn = postgres_pool.getconn()
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT cve_id FROM cve_tracking 
-                WHERE first_seen_date > NOW() - INTERVAL '7 days'
-                AND is_new = TRUE
-            """)
-            new_cves = {row[0] for row in cur.fetchall()}
-            
-            for cve in cves:
-                cve['is_new'] = cve['cve_id'] in new_cves
-            
-            cur.close()
-            postgres_pool.putconn(conn)
-        except Exception as e:
-            print(f"⚠️ Error fetching new CVEs: {e}")
+        # Mark new CVEs (from last 7 days)
+        if postgres_pool and cves:
+            try:
+                conn = postgres_pool.getconn()
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT cve_id FROM cve_tracking 
+                    WHERE first_seen_date > NOW() - INTERVAL '7 days'
+                    AND is_new = TRUE
+                """)
+                new_cves = {row[0] for row in cur.fetchall()}
+                
+                for cve in cves:
+                    cve['is_new'] = cve['cve_id'] in new_cves
+                
+                cur.close()
+                postgres_pool.putconn(conn)
+            except Exception as e:
+                print(f"⚠️ Error fetching new CVEs: {e}")
 
-    total_pages = (total // 50) + (1 if total % 50 > 0 else 0) if total else 1
+        total_pages = (total // 50) + (1 if total % 50 > 0 else 0) if total else 1
 
-    return render_template(
-        "index.html",
-        cves=cves,
-        keyword=keyword,
-        severity_filter=severity_filter,
-        active_keywords=active_keywords,
-        page=page,
-        total_pages=total_pages,
-        use_ai=use_ai,
-        env_boms=ENV_BOMS
-    )
+        return render_template(
+            "index.html",
+            cves=cves,
+            keyword=keyword,
+            severity_filter=severity_filter,
+            active_keywords=active_keywords,
+            page=page,
+            total_pages=total_pages,
+            use_ai=use_ai,
+            env_boms=ENV_BOMS
+        )
+    except Exception as e:
+        print(f"❌ Error in index route: {e}")
+        return render_template(
+            "index.html",
+            cves=[],
+            keyword=keyword,
+            severity_filter=severity_filter,
+            active_keywords=[],
+            page=1,
+            total_pages=1,
+            use_ai=use_ai,
+            env_boms=ENV_BOMS
+        )
 
 # ============================================================
 # CVE SEARCH FUNCTIONS
@@ -1124,9 +1334,6 @@ def _rule_based_remediation(description: str, cve_id: str = "") -> str:
 init_database()
 download_cve_from_github()
 init_postgres()
-
-# Run initial fetch on startup (optional - comment out if not needed)
-# threading.Timer(30, fetch_new_cves_from_nvd).start()
 
 if __name__ == "__main__":
     print("=" * 55)
