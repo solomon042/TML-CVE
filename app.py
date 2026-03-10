@@ -107,7 +107,7 @@ def load_boms_from_env():
 ENV_BOMS = load_boms_from_env()
 
 # ============================================================
-# DOWNLOAD DATABASE FROM GITHUB
+# DOWNLOAD DATABASE FROM GITHUB - FIXED VERSION
 # ============================================================
 
 def download_cve_from_github():
@@ -122,9 +122,12 @@ def download_cve_from_github():
             # Verify it's a valid SQLite database
             try:
                 test_conn = sqlite3.connect(DB)
-                test_conn.execute("SELECT count(*) FROM cves")
+                cursor = test_conn.cursor()
+                cursor.execute("SELECT count(*) FROM cves")
+                count = cursor.fetchone()[0]
+                cursor.close()
                 test_conn.close()
-                print("✅ Database is valid")
+                print(f"✅ Database is valid with {count:,} CVEs")
                 return True
             except Exception as e:
                 print(f"⚠️ Existing database is corrupted, re-downloading: {e}")
@@ -164,16 +167,29 @@ def download_cve_from_github():
         size_mb = os.path.getsize(DB) / (1024 * 1024)
         print(f"✅ Downloaded successfully: {size_mb:.1f} MB")
         
-        # Verify downloaded database
+        # Verify downloaded database - FIXED VERSION
         try:
             test_conn = sqlite3.connect(DB)
-            test_conn.execute("SELECT count(*) FROM cves")
-            count = test_conn.fetchone()[0]
+            cursor = test_conn.cursor()
+            cursor.execute("SELECT count(*) FROM cves")
+            count = cursor.fetchone()[0]
+            cursor.close()
             test_conn.close()
-            print(f"✅ Downloaded database is valid with {count} CVEs")
+            print(f"✅ Downloaded database is valid with {count:,} CVEs")
             return True
         except Exception as e:
             print(f"❌ Downloaded database is corrupted: {e}")
+            # Try to see what tables actually exist
+            try:
+                test_conn = sqlite3.connect(DB)
+                cursor = test_conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = cursor.fetchall()
+                print(f"   Tables in database: {[t[0] for t in tables]}")
+                cursor.close()
+                test_conn.close()
+            except:
+                pass
             return False
         
     except requests.exceptions.HTTPError as e:
@@ -445,7 +461,6 @@ def send_bom_alert(email, bom_name, keywords, matches):
         <style>
             body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
             .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }}
-            .stats {{ background-color: #f8f9fa; padding: 15px; margin: 20px 0; border-radius: 8px; }}
             .cve-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
             .cve-table th {{ background-color: #4a5568; color: white; padding: 12px; text-align: left; }}
             .cve-table td {{ padding: 12px; border: 1px solid #ddd; }}
@@ -486,11 +501,6 @@ def send_bom_alert(email, bom_name, keywords, matches):
                 </tr>
                 {matches_html}
             </table>
-            
-            <div style="margin-top: 20px; text-align: center;">
-                <a href="https://nvd.nist.gov" style="background-color: #1a56db; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">View All CVEs</a>
-                <a href="#" style="background-color: #6c757d; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Manage BOMs</a>
-            </div>
             
             <div class="footer">
                 <p>This is an automated alert from your CVE Monitoring Dashboard.</p>
@@ -999,8 +1009,64 @@ def extract_affected_companies(description: str) -> list:
     return found
 
 # ============================================================
-# API ROUTES
+# API ROUTES - ADDED MISSING STATS ROUTES
 # ============================================================
+
+@app.route("/stats")
+def stats():
+    """Get statistics about CVEs in the database"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get total count
+        cursor.execute("SELECT COUNT(*) FROM cves")
+        total = cursor.fetchone()[0]
+        
+        # Get severity counts
+        cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 9.0")
+        critical = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 7.0 AND cvss_score < 9.0")
+        high = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 4.0 AND cvss_score < 7.0")
+        medium = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score > 0 AND cvss_score < 4.0")
+        low = cursor.fetchone()[0]
+        
+        # Get AI count
+        cursor.execute("SELECT COUNT(*) FROM cve_ai_analysis")
+        ai_count = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        return jsonify({
+            "total_cves": total,
+            "critical": critical,
+            "high": high,
+            "medium": medium,
+            "low": low,
+            "ai_enhanced": ai_count
+        })
+    except Exception as e:
+        print(f"❌ Stats error: {e}")
+        return jsonify({
+            "total_cves": 0,
+            "critical": 0,
+            "high": 0,
+            "medium": 0,
+            "low": 0,
+            "ai_enhanced": 0,
+            "error": str(e)
+        })
+
+@app.route("/keyword-stats")
+def keyword_stats():
+    """Get statistics for keywords (placeholder)"""
+    # For now, return empty stats
+    return jsonify({})
 
 @app.route("/api/boms", methods=["GET"])
 def get_boms():
