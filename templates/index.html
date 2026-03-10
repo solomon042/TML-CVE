@@ -23,6 +23,7 @@
             --text-muted: #6b7280;
             --mono: 'IBM Plex Mono', monospace;
             --sans: 'IBM Plex Sans', sans-serif;
+            --new-badge: #dc2626;
 
             /* Industry colors */
             --automotive: #7c3aed;
@@ -42,7 +43,6 @@
             font-size: 14px;
         }
 
-        /* ── HEADER ── */
         .app-header {
             background: var(--dark);
             color: white;
@@ -65,10 +65,63 @@
         }
         .app-header .brand i { color: #60a5fa; font-size: 1.4rem; }
 
-        /* ── MAIN LAYOUT ── */
         .app-body { padding: 20px 24px; max-width: 100%; }
 
-        /* ── STAT CARDS ── */
+        /* Alert Banner */
+        .alert-banner {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .alert-banner a {
+            color: white;
+            text-decoration: underline;
+            font-weight: 600;
+        }
+
+        /* BOM Cards */
+        .bom-section {
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 20px;
+        }
+        .bom-title {
+            font-weight: 700;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .bom-card {
+            background: var(--surface-2);
+            border-left: 4px solid var(--primary);
+            border-radius: 0 8px 8px 0;
+            padding: 12px;
+            margin-bottom: 10px;
+        }
+        .bom-card .email {
+            color: var(--primary);
+            font-weight: 600;
+        }
+        .keyword-badge {
+            background: white;
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-size: 0.75rem;
+            padding: 4px 10px;
+            border-radius: 20px;
+            display: inline-block;
+            margin: 2px;
+        }
+
+        /* STAT CARDS */
         .stat-strip {
             display: flex;
             gap: 12px;
@@ -98,6 +151,7 @@
         .stat-icon.slate { background: #f1f5f9; color: #475569; }
         .stat-label { font-size: 0.72rem; color: var(--text-muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
         .stat-value { font-size: 1rem; font-weight: 700; color: var(--text); }
+        
         .sev-pills { display: flex; gap: 4px; flex-wrap: wrap; }
         .sev-pill {
             font-size: 0.72rem; font-weight: 700;
@@ -109,7 +163,53 @@
         .sev-pill.med  { background: #cffafe; color: #164e63; }
         .sev-pill.low  { background: #f3f4f6; color: #374151; }
 
-        /* ── SEARCH PANEL ── */
+        /* Recent Alerts */
+        .alerts-card {
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 18px;
+        }
+        .alerts-title {
+            font-weight: 700;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .alert-item {
+            padding: 10px;
+            border-left: 3px solid var(--primary);
+            background: var(--surface-2);
+            margin-bottom: 8px;
+            border-radius: 0 6px 6px 0;
+            font-size: 0.85rem;
+        }
+        .alert-item .time {
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            font-family: var(--mono);
+        }
+
+        .new-badge {
+            background: var(--new-badge);
+            color: white;
+            font-size: 0.65rem;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 10px;
+            margin-left: 8px;
+            display: inline-block;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.8; }
+            100% { opacity: 1; }
+        }
+
         .search-panel {
             background: white;
             border: 1px solid var(--border);
@@ -147,72 +247,6 @@
         .upload-zone:hover { border-color: var(--primary); background: #dbeafe; }
         .upload-zone i { font-size: 2.5rem; color: var(--primary); }
 
-        /* ── INDUSTRY FILTER BAR ── */
-        .industry-bar {
-            background: white;
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 12px 16px;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-        .industry-bar .label {
-            font-size: 0.78rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: var(--text-muted);
-            white-space: nowrap;
-        }
-        .ind-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 5px 14px;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            font-weight: 600;
-            cursor: pointer;
-            border: 2px solid transparent;
-            transition: all 0.15s;
-            background: var(--surface-3);
-            color: var(--text-muted);
-        }
-        .ind-btn:hover { opacity: 0.85; }
-        .ind-btn.active { color: white; }
-        .ind-btn[data-ind="all"].active    { background: var(--dark); border-color: var(--dark); }
-        .ind-btn[data-ind="automotive"].active { background: var(--automotive); border-color: var(--automotive); }
-        .ind-btn[data-ind="it"].active     { background: var(--it); border-color: var(--it); }
-        .ind-btn[data-ind="iot"].active    { background: var(--iot); border-color: var(--iot); }
-        .ind-btn[data-ind="industrial"].active { background: var(--industrial); border-color: var(--industrial); }
-        .ind-btn[data-ind="telecom"].active { background: var(--telecom); border-color: var(--telecom); }
-        .ind-btn[data-ind="medical"].active { background: var(--medical); border-color: var(--medical); }
-
-        .ind-dot {
-            width: 8px; height: 8px;
-            border-radius: 50%;
-            flex-shrink: 0;
-        }
-        .ind-dot.automotive { background: var(--automotive); }
-        .ind-dot.it         { background: var(--it); }
-        .ind-dot.iot        { background: var(--iot); }
-        .ind-dot.industrial { background: var(--industrial); }
-        .ind-dot.telecom    { background: var(--telecom); }
-        .ind-dot.medical    { background: var(--medical); }
-        .ind-dot.all        { background: var(--dark); }
-
-        .ind-count-badge {
-            background: rgba(0,0,0,0.12);
-            border-radius: 10px;
-            padding: 0 6px;
-            font-size: 0.7rem;
-            font-family: var(--mono);
-        }
-
-        /* ── ACTIVE KEYWORDS ── */
         .kw-strip {
             background: white;
             border: 1px solid #bfdbfe;
@@ -224,28 +258,7 @@
             gap: 8px;
             flex-wrap: wrap;
         }
-        .kw-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            background: #eff6ff;
-            color: var(--primary);
-            border: 1px solid #bfdbfe;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.82rem;
-            font-weight: 600;
-        }
-        .kw-badge .rm {
-            cursor: pointer;
-            color: #93c5fd;
-            font-size: 1rem;
-            line-height: 1;
-            font-weight: 700;
-        }
-        .kw-badge .rm:hover { color: var(--danger); }
 
-        /* ── RESULTS HEADER ── */
         .results-header {
             display: flex;
             justify-content: space-between;
@@ -254,34 +267,7 @@
             flex-wrap: wrap;
             gap: 10px;
         }
-        .results-title {
-            font-size: 0.95rem;
-            font-weight: 700;
-            color: var(--text);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .results-count {
-            background: var(--primary);
-            color: white;
-            font-family: var(--mono);
-            font-size: 0.8rem;
-            padding: 2px 10px;
-            border-radius: 12px;
-        }
-        .results-count.filtered {
-            background: var(--automotive);
-        }
-        .ai-active-note {
-            font-size: 0.78rem;
-            color: var(--success);
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
 
-        /* ── TABLE ── */
         .table-wrap {
             background: white;
             border: 1px solid var(--border);
@@ -312,80 +298,20 @@
             white-space: nowrap;
             border-right: 1px solid rgba(255,255,255,0.08);
         }
-        thead th:last-child { border-right: none; }
-
-        tbody tr {
-            border-bottom: 1px solid var(--border);
-            transition: background 0.1s;
-        }
         tbody tr:hover { background: #f8faff; }
-        tbody tr.hidden-row { display: none; }
-
         td {
             padding: 10px;
             vertical-align: top;
             border-right: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
             font-size: 0.83rem;
         }
-        td:last-child { border-right: none; }
 
-        /* Column widths */
         .col-id       { width: 110px; }
         .col-cvss     { width: 60px; }
         .col-sev      { width: 82px; }
         .col-date     { width: 88px; }
         .col-desc     { width: 210px; }
-        .col-ai       { width: 220px; }
-        .col-ver      { width: 96px; }
-        .col-status   { width: 110px; }
-        .col-rem      { width: 220px; }
-        .col-ind      { width: 130px; }
-        .col-comp     { width: 130px; }
-        .col-match    { width: 90px; }
-
-        /* Cell styles */
-        .cell-scroll {
-            max-height: 130px;
-            overflow-y: auto;
-            scrollbar-width: thin;
-            scrollbar-color: #cbd5e1 transparent;
-        }
-        .cell-scroll::-webkit-scrollbar { width: 4px; }
-        .cell-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
-
-        .desc-box {
-            background: var(--surface-2);
-            border-left: 3px solid #94a3b8;
-            border-radius: 0 6px 6px 0;
-            padding: 8px 10px;
-            font-size: 0.8rem;
-            line-height: 1.55;
-            color: #374151;
-        }
-        .ai-box {
-            background: #f0f7ff;
-            border-left: 3px solid var(--primary);
-            border-radius: 0 6px 6px 0;
-            padding: 8px 10px;
-            font-size: 0.82rem;
-            line-height: 1.6;
-            color: #1e3a5f;
-        }
-        .rem-box {
-            background: #f0fdf4;
-            border-left: 3px solid var(--success);
-            border-radius: 0 6px 6px 0;
-            padding: 8px 10px;
-            font-size: 0.82rem;
-            line-height: 1.6;
-            color: #14532d;
-        }
-        .ai-box.pending, .rem-box.pending {
-            background: var(--surface-2);
-            border-left-color: #cbd5e1;
-            color: var(--text-muted);
-            font-style: italic;
-        }
 
         .cvss-val {
             font-family: var(--mono);
@@ -399,7 +325,7 @@
         .cvss-val.med  { color: #0284c7; }
         .cvss-val.low  { color: #6b7280; }
 
-        .sev-badge {
+        .severity-badge {
             display: inline-block;
             padding: 3px 9px;
             border-radius: 12px;
@@ -408,460 +334,81 @@
             text-align: center;
             width: 100%;
         }
-        .sev-badge.Critical { background: #fee2e2; color: #991b1b; }
-        .sev-badge.High     { background: #fef3c7; color: #92400e; }
-        .sev-badge.Medium   { background: #cffafe; color: #164e63; }
-        .sev-badge.Low      { background: #f3f4f6; color: #374151; }
-        .sev-badge.Unknown  { background: #f3f4f6; color: #9ca3af; }
+        .severity-badge.Critical { background: #fee2e2; color: #991b1b; }
+        .severity-badge.High     { background: #fef3c7; color: #92400e; }
+        .severity-badge.Medium   { background: #cffafe; color: #164e63; }
+        .severity-badge.Low      { background: #f3f4f6; color: #374151; }
 
-        .cve-link {
-            font-family: var(--mono);
-            font-size: 0.8rem;
-            font-weight: 600;
-            color: var(--primary);
-            text-decoration: none;
-            display: block;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .cve-link:hover { text-decoration: underline; }
-
-        .ver-badge {
-            display: inline-block;
-            background: #cffafe;
-            color: #164e63;
-            font-family: var(--mono);
-            font-size: 0.72rem;
-            font-weight: 600;
-            padding: 3px 8px;
-            border-radius: 6px;
-            max-width: 100%;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        /* Fix Status */
-        .fix-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 0.72rem;
-            font-weight: 700;
-            white-space: nowrap;
-        }
-        .fix-badge.available  { background: #d1fae5; color: #065f46; }
-        .fix-badge.notfixed   { background: #fee2e2; color: #991b1b; }
-        .fix-badge.workaround { background: #fef3c7; color: #78350f; }
-        .fix-badge.unknown    { background: #f3f4f6; color: #6b7280; }
-        .fixed-in {
-            font-family: var(--mono);
-            font-size: 0.7rem;
-            color: var(--text-muted);
-            margin-top: 4px;
-            display: block;
-        }
-
-        /* Industry tags */
-        .ind-tag {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            padding: 3px 9px;
-            border-radius: 12px;
-            font-size: 0.72rem;
-            font-weight: 600;
-            margin: 2px;
-            white-space: nowrap;
-        }
-        .ind-tag.automotive { background: #ede9fe; color: #5b21b6; }
-        .ind-tag.it         { background: #e0f2fe; color: #0369a1; }
-        .ind-tag.iot        { background: #dcfce7; color: #166534; }
-        .ind-tag.industrial { background: #fef3c7; color: #92400e; }
-        .ind-tag.telecom    { background: #fce7f3; color: #9d174d; }
-        .ind-tag.medical    { background: #fee2e2; color: #991b1b; }
-
-        /* Company tags */
-        .comp-tag {
-            display: inline-block;
-            background: #eff6ff;
-            color: #1d4ed8;
-            border: 1px solid #bfdbfe;
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-size: 0.72rem;
-            font-weight: 500;
-            margin: 2px;
-        }
-        .match-tag {
-            background: #fefce8;
-            color: #713f12;
-            border: 1px solid #fde68a;
-            padding: 2px 7px;
-            border-radius: 8px;
-            font-size: 0.72rem;
-            font-weight: 600;
-            margin: 2px;
-            display: inline-block;
-        }
-
-        /* ── LOADING SPINNER ── */
-        .spinner-overlay {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(17,25,40,0.6);
-            z-index: 9999;
-            align-items: center;
-            justify-content: center;
-        }
-        .spinner-overlay.show { display: flex; }
-        .spinner-box {
-            background: white;
-            border-radius: 14px;
-            padding: 32px 40px;
-            text-align: center;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-        }
-        .spinner-box p { color: var(--text-muted); margin: 0; font-size: 0.85rem; }
-
-        /* ── EMPTY STATE ── */
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: var(--text-muted);
-        }
-        .empty-state i { font-size: 3rem; color: #d1d5db; }
-
-        /* ── AI TOGGLE ── */
-        .ai-toggle-group {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            background: rgba(255,255,255,0.08);
-            border-radius: 8px;
-            padding: 6px 14px;
-            position: relative;
-        }
-        .ai-toggle-group label {
-            color: #e5e7eb;
-            font-size: 0.85rem;
-            font-weight: 500;
-            cursor: pointer;
-        }
-        .ai-status-dot {
-            width: 8px; height: 8px;
-            border-radius: 50%;
-            flex-shrink: 0;
-        }
-        .ai-status-dot.on  { background: #34d399; box-shadow: 0 0 0 3px rgba(52,211,153,0.3); }
-        .ai-status-dot.off { background: #6b7280; }
-
-        /* ── AI PROVIDER DROPDOWN PANEL ── */
-        .ai-provider-btn {
-            background: rgba(255,255,255,0.12);
-            border: 1px solid rgba(255,255,255,0.18);
-            border-radius: 6px;
-            color: #e2e8f0;
-            font-size: 0.78rem;
-            font-weight: 600;
-            padding: 3px 10px 3px 8px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            transition: background 0.15s;
-            white-space: nowrap;
-        }
-        .ai-provider-btn:hover { background: rgba(255,255,255,0.2); }
-        .ai-provider-btn .provider-dot { width:7px;height:7px;border-radius:50%;flex-shrink:0; }
-        .ai-provider-panel {
-            display: none;
-            position: absolute;
-            top: calc(100% + 10px);
-            right: 0;
-            width: 320px;
-            background: #1e293b;
-            border: 1px solid #334155;
-            border-radius: 12px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-            z-index: 9999;
-            padding: 16px;
-        }
-        .ai-provider-panel.open { display: block; }
-        .ai-provider-panel .panel-title {
-            font-size: 0.72rem; font-weight: 700; color: #64748b;
-            text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px;
-        }
-        .provider-options { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
-        .provider-opt {
-            border: 1.5px solid #334155; border-radius: 8px; padding: 7px 10px;
-            cursor: pointer; transition: all 0.15s; background: #0f172a;
-        }
-        .provider-opt:hover { border-color: #3b82f6; background: #1e3a5f; }
-        .provider-opt.active { border-color: #3b82f6; background: #1e3a5f; }
-        .provider-opt .pname { font-size: 0.78rem; font-weight: 700; color: #e2e8f0; }
-        .provider-opt .ptag  { font-size: 0.63rem; font-weight: 600; }
-        .provider-opt .ptag.free { color: #34d399; }
-        .provider-opt .ptag.paid { color: #fbbf24; }
-        .api-key-row { display: flex; gap: 6px; margin-bottom: 8px; }
-        .api-key-row input {
-            flex: 1; background: #0f172a; border: 1px solid #334155; border-radius: 7px;
-            color: #e2e8f0; font-size: 0.78rem; padding: 6px 10px; outline: none; transition: border-color 0.15s;
-        }
-        .api-key-row input:focus { border-color: #3b82f6; }
-        .api-key-row input::placeholder { color: #475569; font-size: 0.72rem; }
-        .api-key-row .eye-btn {
-            background: #0f172a; border: 1px solid #334155; border-radius: 7px;
-            color: #64748b; padding: 0 8px; cursor: pointer; font-size: 0.8rem;
-        }
-        .model-row select {
-            width: 100%; background: #0f172a; border: 1px solid #334155;
-            border-radius: 7px; color: #e2e8f0; font-size: 0.78rem;
-            padding: 6px 10px; outline: none; margin-bottom: 10px;
-        }
-        .btn-apply-ai {
-            width: 100%; background: #3b82f6; color: white; border: none;
-            border-radius: 7px; padding: 7px; font-size: 0.8rem; font-weight: 700;
-            cursor: pointer; transition: background 0.15s;
-        }
-        .btn-apply-ai:hover { background: #2563eb; }
-        .btn-apply-ai:disabled { background: #334155; cursor: not-allowed; }
-        .ai-test-result { margin-top: 8px; font-size: 0.73rem; text-align: center; min-height: 16px; }
-        .ai-test-result.ok  { color: #34d399; }
-        .ai-test-result.err { color: #f87171; }
-        .ai-panel-note { margin-top: 10px; padding-top: 8px; border-top: 1px solid #334155; font-size: 0.68rem; color: #475569; text-align: center; }
-
-        /* ── EXPORT BTN ── */
-        .export-btn {
-            background: var(--success);
+        .btn-primary {
+            background: var(--primary);
             color: white;
             border: none;
-            padding: 8px 18px;
+            padding: 8px 16px;
             border-radius: 8px;
-            font-size: 0.83rem;
             font-weight: 600;
             cursor: pointer;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            transition: background 0.15s;
         }
-        .export-btn:hover { background: #046c4e; color: white; }
-
-        /* ── PAGINATION ── */
-        .pagination .page-link {
-            color: var(--primary);
-            border-color: var(--border);
-            font-size: 0.83rem;
-        }
-        .pagination .page-item.active .page-link {
-            background: var(--primary);
-            border-color: var(--primary);
-        }
-
-        /* ── DEBUG BOX ── */
-        .debug-box {
-            background: #1e293b;
-            color: #94a3b8;
+        .btn-outline {
+            background: white;
+            border: 1px solid var(--border);
+            padding: 8px 16px;
             border-radius: 8px;
-            padding: 14px;
-            font-family: var(--mono);
-            font-size: 0.78rem;
-            margin-top: 16px;
+            cursor: pointer;
         }
-        .debug-box .key { color: #7dd3fc; }
-        .debug-box .val { color: #86efac; }
-
-        /* ── SKELETON LOADING ── */
-        @keyframes shimmer {
-            0%   { background-position: -400px 0; }
-            100% { background-position: 400px 0; }
-        }
-        .skeleton-line {
-            display: block;
-            height: 10px;
-            border-radius: 4px;
-            margin-bottom: 6px;
-            width: 100%;
-            background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
-            background-size: 400px 100%;
-            animation: shimmer 1.4s infinite;
-        }
-        .ai-box.pending   { min-height: 44px; }
-        .rem-box.pending  { min-height: 44px; }
-
-        /* ── AI PROGRESS BAR ── */
-        .ai-progress-bar {
-            position: fixed;
-            top: 0; left: 0; right: 0;
-            height: 3px;
-            background: #dbeafe;
-            z-index: 9999;
-            display: none;
-        }
-        .ai-progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #3b82f6, #06b6d4);
-            transition: width 0.3s ease;
-            width: 0%;
-        }
-        .ai-status-toast {
-            position: fixed;
-            bottom: 20px; right: 20px;
-            background: #1e293b;
-            color: white;
-            padding: 10px 16px;
-            border-radius: 8px;
-            font-size: 0.8rem;
-            font-family: var(--mono);
-            display: none;
-            align-items: center;
-            gap: 8px;
-            z-index: 9998;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-        }
-        .ai-status-toast.show { display: flex; }
-        .ai-dot {
-            width: 8px; height: 8px; border-radius: 50%;
-            background: #34d399;
-            animation: pulse 1s infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50%       { opacity: 0.3; }
-        }
-
-        @media (max-width: 768px) {
-            .app-body { padding: 12px; }
-            .stat-strip { gap: 8px; }
+        .footer {
+            margin-top: 30px;
+            padding: 20px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            border-top: 1px solid var(--border);
         }
     </style>
 </head>
 <body>
 
-<!-- AI progress bar at top of page -->
-<div class="ai-progress-bar" id="aiProgressBar">
-    <div class="ai-progress-fill" id="aiProgressFill"></div>
-</div>
-
-<!-- AI status toast bottom-right -->
-<div class="ai-status-toast" id="aiStatusToast">
-    <span class="ai-dot"></span>
-    <span id="aiStatusText">Fetching AI analysis…</span>
-</div>
-
-<!-- ═══ HEADER ═══ -->
 <div class="app-header">
     <div class="brand">
         <i class="bi bi-shield-shaded"></i>
         CVE Monitoring Dashboard
     </div>
-    <div class="ai-toggle-group">
-        <span class="ai-status-dot {% if use_ai %}on{% else %}off{% endif %}" id="aiStatusDot"></span>
-        <input class="form-check-input" type="checkbox" id="aiToggle" {% if use_ai %}checked{% endif %} onchange="toggleAI()">
-        <label for="aiToggle"><i class="bi bi-robot me-1"></i>AI Enhancement</label>
-        <span id="aiEnabledLabel" style="font-size:0.75rem; color: {% if use_ai %}#34d399{% else %}#9ca3af{% endif %}; font-weight:700;">
-            {{ 'ENABLED' if use_ai else 'DISABLED' }}
+    <div>
+        <span class="badge bg-success me-2">
+            <i class="bi bi-robot"></i> AI Enabled
         </span>
-
-        <!-- Provider dropdown button -->
-        <button class="ai-provider-btn" id="providerBtn" onclick="toggleProviderPanel(event)">
-            <span class="provider-dot" id="providerDot" style="background:#34d399"></span>
-            <span id="providerBtnLabel">DeepSeek</span>
-            <i class="bi bi-chevron-down" style="font-size:0.6rem;opacity:0.7"></i>
-        </button>
-
-        <!-- Update DB button -->
-        <a href="/update-cve" title="Update CVE Database"
-           style="background:#16a34a;color:white;padding:5px 12px;border-radius:7px;
-                  font-size:0.78rem;font-weight:600;text-decoration:none;
-                  display:inline-flex;align-items:center;gap:5px;margin-right:4px;">
-            <i class="bi bi-cloud-arrow-down"></i>Update DB
-        </a>
-
-        <!-- Admin link -->
-        <a href="/admin" title="Admin Panel"
-           style="color:#94a3b8; font-size:1rem; text-decoration:none;">
-            <i class="bi bi-shield-lock-fill"></i>
-        </a>
-
-        <!-- Inline provider panel -->
-        <div class="ai-provider-panel" id="aiProviderPanel">
-            <div class="panel-title"><i class="bi bi-cpu me-1"></i>AI Provider &amp; API Key</div>
-
-            <!-- Provider selector -->
-            <div class="provider-options" id="providerOptions">
-                <div class="provider-opt active" data-provider="deepseek" data-models='["deepseek-chat","deepseek-reasoner"]' data-placeholder="sk-..." onclick="selectProvider(this)">
-                    <div class="pname">DeepSeek</div>
-                    <div class="ptag free">Free tier</div>
-                </div>
-                <div class="provider-opt" data-provider="openai" data-models='["gpt-4o-mini","gpt-4o","gpt-3.5-turbo"]' data-placeholder="sk-proj-..." onclick="selectProvider(this)">
-                    <div class="pname">OpenAI</div>
-                    <div class="ptag paid">Paid</div>
-                </div>
-                <div class="provider-opt" data-provider="claude" data-models='["claude-3-haiku-20240307","claude-3-5-sonnet-20241022"]' data-placeholder="sk-ant-..." onclick="selectProvider(this)">
-                    <div class="pname">Claude</div>
-                    <div class="ptag paid">Paid</div>
-                </div>
-                <div class="provider-opt" data-provider="ollama" data-models='["llama3.2","llama3.1","mistral","phi3"]' data-placeholder="No key needed" onclick="selectProvider(this)">
-                    <div class="pname">Ollama</div>
-                    <div class="ptag free">Local/Free</div>
-                </div>
-            </div>
-
-            <!-- API key input -->
-            <div class="api-key-row" id="apiKeyRow">
-                <input type="password" id="aiApiKeyInput" placeholder="Paste your API key here"
-                       oninput="onApiKeyChange()">
-                <button class="eye-btn" onclick="toggleKeyVisibility()"><i class="bi bi-eye" id="eyeIcon"></i></button>
-            </div>
-
-            <!-- Model selector -->
-            <div class="model-row">
-                <select id="aiModelSelect">
-                    <option value="deepseek-chat">deepseek-chat</option>
-                    <option value="deepseek-reasoner">deepseek-reasoner</option>
-                </select>
-            </div>
-
-            <!-- Apply button -->
-            <button class="btn-apply-ai" id="applyAiBtn" onclick="applyAiSettings()">
-                <span id="applyBtnText"><i class="bi bi-check-lg me-1"></i>Apply &amp; Test</span>
-            </button>
-            <div class="ai-test-result" id="aiTestResult"></div>
-            <div class="ai-panel-note">
-                <i class="bi bi-shield-lock me-1"></i>Key stored in session only — never saved to server
-            </div>
-        </div>
+        <span class="badge bg-info">
+            <i class="bi bi-envelope"></i> Alerts Active
+        </span>
     </div>
 </div>
 
 <div class="app-body">
 
-    <!-- ═══ STAT STRIP ═══ -->
+    <!-- Alert Banner -->
+    <div class="alert-banner">
+        <span>
+            <i class="bi bi-megaphone"></i>
+            Daily updates run at 2:00 AM UTC. Last update: <span id="lastUpdate">Today</span>
+        </span>
+        <a href="#" onclick="refreshData()">
+            <i class="bi bi-arrow-repeat"></i> Refresh
+        </a>
+    </div>
+
+    <!-- STAT STRIP - UPDATED WITH CORRECT IDS -->
     <div class="stat-strip">
         <div class="stat-card">
             <div class="stat-icon blue"><i class="bi bi-calendar-range"></i></div>
             <div>
                 <div class="stat-label">Data Coverage</div>
-                <div class="stat-value" id="dateRangeText" style="font-size:0.82rem;">Loading…</div>
+                <div class="stat-value" id="dateRangeText">Loading…</div>
             </div>
         </div>
         <div class="stat-card" id="totalCard">
             <div class="stat-icon green"><i class="bi bi-database"></i></div>
             <div>
                 <div class="stat-label" id="totalLabel">Total CVEs</div>
-                <div style="display:flex; align-items:baseline; gap:8px;">
-                    <div class="stat-value" id="totalCves">—</div>
-                    <span id="statsContext" style="display:none; font-size:0.72rem; font-weight:600;
-                          background:#eff6ff; color:#1d4ed8; border-radius:10px;
-                          padding:2px 8px; font-family:var(--mono); white-space:nowrap;"></span>
-                </div>
+                <div class="stat-value" id="totalCves">—</div>
             </div>
         </div>
         <div class="stat-card">
@@ -876,35 +423,87 @@
                 </div>
             </div>
         </div>
-        {% if use_ai %}
         <div class="stat-card">
-            <div class="stat-icon blue"><i class="bi bi-robot"></i></div>
+            <div class="stat-icon blue"><i class="bi bi-calendar-check"></i></div>
+            <div>
+                <div class="stat-label">New (7 days)</div>
+                <div class="stat-value" id="newCount">0</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon purple"><i class="bi bi-robot"></i></div>
             <div>
                 <div class="stat-label">AI Analyzed</div>
                 <div class="stat-value" id="aiCount">—</div>
             </div>
         </div>
-        {% endif %}
     </div>
 
-    <!-- ═══ SEARCH PANEL ═══ -->
+    <!-- BOM Section -->
+    <div class="bom-section">
+        <div class="bom-title">
+            <i class="bi bi-gear text-primary"></i>
+            Active BOM Configurations (from Environment Variables)
+        </div>
+        <div id="bomList">
+            {% if env_boms and env_boms|length > 0 %}
+                {% for bom in env_boms %}
+                <div class="bom-card">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <span class="email"><i class="bi bi-envelope"></i> {{ bom.email }}</span>
+                            <span class="badge bg-primary ms-2">{{ bom.name }}</span>
+                        </div>
+                        <span class="badge bg-info">{{ bom.keywords|length }} keywords</span>
+                    </div>
+                    <div class="mt-2">
+                        {% for keyword in bom.keywords[:10] %}
+                        <span class="keyword-badge">{{ keyword }}</span>
+                        {% endfor %}
+                        {% if bom.keywords|length > 10 %}
+                        <span class="keyword-badge">+{{ bom.keywords|length - 10 }} more</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    No BOMs configured. Add BOM_KEYWORDS_1, BOM_EMAIL_1, etc. to environment variables.
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Recent Alerts -->
+    <div class="alerts-card">
+        <div class="alerts-title">
+            <i class="bi bi-bell-fill text-primary"></i>
+            Recent Alerts (Last 24h)
+        </div>
+        <div id="recentAlerts">
+            <div class="text-center py-3">
+                <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                Loading alerts...
+            </div>
+        </div>
+    </div>
+
+    <!-- SEARCH PANEL -->
     <div class="search-panel mb-3">
         <ul class="nav nav-tabs" id="searchTabs" role="tablist">
             <li class="nav-item" role="presentation">
-                <button class="nav-link {% if request.args.get('tab') not in ['bom','multi'] %}active{% endif %}"
-                        id="single-tab" data-bs-toggle="tab" data-bs-target="#single" type="button" role="tab">
+                <button class="nav-link active" id="single-tab" data-bs-toggle="tab" data-bs-target="#single" type="button" role="tab">
                     <i class="bi bi-search me-1"></i>Single Keyword
                 </button>
             </li>
             <li class="nav-item" role="presentation">
-                <button class="nav-link {% if request.args.get('tab') == 'bom' %}active{% endif %}"
-                        id="bom-tab" data-bs-toggle="tab" data-bs-target="#bom" type="button" role="tab">
+                <button class="nav-link" id="bom-tab" data-bs-toggle="tab" data-bs-target="#bom" type="button" role="tab">
                     <i class="bi bi-file-earmark-arrow-up me-1"></i>BOM File Upload
                 </button>
             </li>
             <li class="nav-item" role="presentation">
-                <button class="nav-link {% if request.args.get('tab') == 'multi' %}active{% endif %}"
-                        id="multi-tab" data-bs-toggle="tab" data-bs-target="#multi" type="button" role="tab">
+                <button class="nav-link" id="multi-tab" data-bs-toggle="tab" data-bs-target="#multi" type="button" role="tab">
                     <i class="bi bi-list-check me-1"></i>Multiple Keywords
                 </button>
             </li>
@@ -912,10 +511,8 @@
 
         <div class="tab-content">
             <!-- Single Keyword -->
-            <div class="tab-pane fade {% if request.args.get('tab') not in ['bom','multi'] %}show active{% endif %}" id="single" role="tabpanel">
+            <div class="tab-pane fade show active" id="single" role="tabpanel">
                 <form method="post" action="/search" id="singleSearchForm">
-                    <input type="hidden" name="tab" value="single">
-                    <input type="hidden" name="use_ai" value="{{ 'true' if use_ai else 'false' }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <div class="row g-3 align-items-end">
                         <div class="col-md-5">
@@ -928,10 +525,10 @@
                             <label class="form-label fw-semibold" style="font-size:0.83rem;">Severity Filter</label>
                             <select name="severity" class="form-select">
                                 <option value="">All Severities</option>
-                                <option value="Critical" {% if severity_filter=='Critical' %}selected{% endif %}>Critical (9.0–10.0)</option>
-                                <option value="High"     {% if severity_filter=='High'     %}selected{% endif %}>High (7.0–8.9)</option>
-                                <option value="Medium"   {% if severity_filter=='Medium'   %}selected{% endif %}>Medium (4.0–6.9)</option>
-                                <option value="Low"      {% if severity_filter=='Low'      %}selected{% endif %}>Low (0–3.9)</option>
+                                <option value="Critical">Critical (9.0–10.0)</option>
+                                <option value="High">High (7.0–8.9)</option>
+                                <option value="Medium">Medium (4.0–6.9)</option>
+                                <option value="Low">Low (0–3.9)</option>
                             </select>
                         </div>
                         <div class="col-md-3">
@@ -944,9 +541,8 @@
             </div>
 
             <!-- BOM Upload -->
-            <div class="tab-pane fade {% if request.args.get('tab') == 'bom' %}show active{% endif %}" id="bom" role="tabpanel">
+            <div class="tab-pane fade" id="bom" role="tabpanel">
                 <form method="post" enctype="multipart/form-data" action="/upload-bom" id="bomForm">
-                    <input type="hidden" name="use_ai_bom" value="{{ 'true' if use_ai else 'false' }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <div class="row g-4">
                         <div class="col-md-7">
@@ -954,8 +550,7 @@
                                 <i class="bi bi-cloud-upload d-block mb-2"></i>
                                 <input type="file" id="bom-file" name="bom_file"
                                        accept=".txt,.csv,.json,.xml,.xlsx,.xls"
-                                       style="display:none;"
-                                       onchange="document.getElementById('bomForm').submit(); showLoading()">
+                                       style="display:none;">
                                 <strong>Click to upload or drag and drop</strong>
                                 <p class="text-muted mb-1" style="font-size:0.82rem;">TXT, CSV, JSON, XML, Excel</p>
                                 <small class="text-muted"><i class="bi bi-info-circle me-1"></i>TXT: one keyword per line | CSV/Excel: keyword column</small>
@@ -981,10 +576,8 @@
             </div>
 
             <!-- Multi Keyword -->
-            <div class="tab-pane fade {% if request.args.get('tab') == 'multi' %}show active{% endif %}" id="multi" role="tabpanel">
+            <div class="tab-pane fade" id="multi" role="tabpanel">
                 <form method="post" action="/search" id="multiForm">
-                    <input type="hidden" name="use_ai" value="{{ 'true' if use_ai else 'false' }}">
-                    <input type="hidden" name="tab" value="multi">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <div class="row g-4">
                         <div class="col-md-7">
@@ -1003,7 +596,7 @@
                                     <option value="Low">Low</option>
                                 </select>
                             </div>
-                            <button type="submit" class="btn btn-primary" onclick="showLoading()">
+                            <button type="submit" class="btn btn-primary">
                                 <i class="bi bi-search-heart me-1"></i>Search All Keywords
                             </button>
                         </div>
@@ -1013,110 +606,39 @@
         </div>
     </div>
 
-    <!-- ═══ ACTIVE KEYWORDS ═══ -->
-    {% if active_keywords and active_keywords|length > 0 %}
+    <!-- Active Keywords -->
+    {% if active_keywords %}
     <div class="kw-strip">
-        <i class="bi bi-tags text-primary" style="font-size:0.9rem;"></i>
-        <span style="font-size:0.78rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Active:</span>
+        <i class="bi bi-tags text-primary"></i>
+        <span style="font-weight:700;">Active:</span>
         {% for kw in active_keywords %}
-        <span class="kw-badge" id="kwbadge-{{ loop.index }}">
-            {{ kw }}
-            <span class="kw-count" id="kwcount-{{ loop.index }}"
-                  title="Total CVEs matching '{{ kw }}' in full database"
-                  style="background:rgba(203,213,225,0.5); color:#64748b; border-radius:10px;
-                         padding:1px 7px; font-size:0.72rem; font-weight:700;
-                         font-family:var(--mono); margin-left:2px; min-width:20px;
-                         display:inline-block; text-align:center;">…</span>
-            <span class="rm" onclick="removeKeyword('{{ kw }}')" title="Remove">×</span>
-        </span>
+        <span class="badge bg-primary me-1">{{ kw }}</span>
         {% endfor %}
-        <a href="/" class="btn btn-sm btn-outline-danger ms-auto" style="font-size:0.78rem; padding:3px 12px;">
-            <i class="bi bi-x-circle me-1"></i>Clear All
-        </a>
+        <a href="/" class="btn btn-sm btn-outline-danger ms-auto">Clear</a>
     </div>
     {% endif %}
 
-    <!-- ═══ INDUSTRY FILTER BAR ═══ -->
-    {% if cves and cves|length > 0 %}
-    <div class="industry-bar">
-        <span class="label"><i class="bi bi-buildings me-1"></i>Industry Filter:</span>
-
-        <button class="ind-btn active" data-ind="all" onclick="filterIndustry('all', this)">
-            <span class="ind-dot all"></span>
-            All
-            <span class="ind-count-badge" id="count-all">{{ cves|length }}</span>
-        </button>
-        <button class="ind-btn" data-ind="automotive" onclick="filterIndustry('automotive', this)">
-            <span class="ind-dot automotive"></span>
-            🚗 Automotive
-            <span class="ind-count-badge" id="count-automotive">0</span>
-        </button>
-        <button class="ind-btn" data-ind="it" onclick="filterIndustry('it', this)">
-            <span class="ind-dot it"></span>
-            💻 IT / Software
-            <span class="ind-count-badge" id="count-it">0</span>
-        </button>
-        <button class="ind-btn" data-ind="iot" onclick="filterIndustry('iot', this)">
-            <span class="ind-dot iot"></span>
-            📡 IoT / Network
-            <span class="ind-count-badge" id="count-iot">0</span>
-        </button>
-        <button class="ind-btn" data-ind="industrial" onclick="filterIndustry('industrial', this)">
-            <span class="ind-dot industrial"></span>
-            🏭 Industrial
-            <span class="ind-count-badge" id="count-industrial">0</span>
-        </button>
-        <button class="ind-btn" data-ind="telecom" onclick="filterIndustry('telecom', this)">
-            <span class="ind-dot telecom"></span>
-            📱 Telecom
-            <span class="ind-count-badge" id="count-telecom">0</span>
-        </button>
-        <button class="ind-btn" data-ind="medical" onclick="filterIndustry('medical', this)">
-            <span class="ind-dot medical"></span>
-            🏥 Medical
-            <span class="ind-count-badge" id="count-medical">0</span>
-        </button>
-
-        <span id="industryNote" class="ms-auto" style="font-size:0.75rem; color:var(--text-muted); display:none;">
-            <i class="bi bi-funnel me-1"></i><span id="industryNoteText"></span>
-        </span>
-    </div>
-    {% endif %}
-
-    <!-- ═══ RESULTS HEADER ═══ -->
+    <!-- Results Header -->
     <div class="results-header">
         <div>
-            <div class="results-title">
+            <h5 class="mb-0">
                 <i class="bi bi-list-ul"></i>
-                Search Results
-                <span class="results-count" id="visibleCount">{{ cves|length }}</span>
-                <span style="font-size:0.78rem; color:var(--text-muted); font-weight:400;">CVEs</span>
-            </div>
-            {% if use_ai %}
-            <div class="ai-active-note mt-1">
-                <i class="bi bi-robot"></i>
-                AI summaries, detailed version tracking &amp; remediation active
-            </div>
-            {% else %}
-            <div class="mt-1" style="font-size:0.78rem; color:var(--text-muted);">
-                <i class="bi bi-info-circle me-1"></i>
-                Enable AI for detailed summaries &amp; remediation advice
-            </div>
-            {% endif %}
+                Latest CVEs
+                <span class="badge bg-secondary ms-2">{{ cves|length }}</span>
+            </h5>
+            <small class="text-muted">Showing most recent vulnerabilities</small>
         </div>
-        {% if active_keywords and active_keywords|length > 0 %}
-        <a href="/export?keywords={{ active_keywords|join(',') }}&severity={{ severity_filter }}"
-           class="export-btn">
+        {% if active_keywords %}
+        <a href="/export?keywords={{ active_keywords|join(',') }}" class="btn btn-success btn-sm">
             <i class="bi bi-download"></i> Export CSV
         </a>
         {% endif %}
     </div>
 
-    <!-- ═══ TABLE ═══ -->
-    {% if cves and cves|length > 0 %}
+    <!-- CVEs Table -->
     <div class="table-wrap">
         <div class="table-scroll">
-            <table id="cveTable">
+            <table>
                 <thead>
                     <tr>
                         <th class="col-id">CVE ID</th>
@@ -1124,234 +646,53 @@
                         <th class="col-sev">Severity</th>
                         <th class="col-date">Published</th>
                         <th class="col-desc">Description</th>
-                        {% if use_ai %}
-                        <th class="col-ai">AI Summary</th>
-                        {% endif %}
-                        <th class="col-ver">Affected Ver.</th>
-                        <th class="col-status">Fix Status</th>
-                        <th class="col-rem">Remediation</th>
-                        <th class="col-ind">Industry</th>
-                        <th class="col-comp">Affected Companies</th>
-                        <th class="col-match">Matched</th>
                     </tr>
                 </thead>
-                <tbody id="cveTableBody">
+                <tbody>
                     {% for cve in cves %}
-                    {% set desc_lower = (cve.description or '')|lower %}
-                    {% set comp_lower = (cve.affected_companies or [])|join(' ')|lower %}
-                    {% set combined = desc_lower + ' ' + comp_lower %}
-
-                    {# ── Industry classification ── #}
-                    {% set is_automotive = (
-                        'automotive' in combined or 'vehicle' in combined or 'infotainment' in combined or
-                        'ecu' in combined or 'can bus' in combined or 'tesla' in combined or
-                        'nissan' in combined or 'ford' in combined or 'toyota' in combined or
-                        'honda' in combined or 'harman' in combined or 'bosch' in combined or
-                        'alps alpine' in combined or 'denso' in combined or 'valeo' in combined or
-                        'continental' in combined or 'magna' in combined or 'ota update' in combined
-                    ) %}
-                    {% set is_it = (
-                        'microsoft' in combined or 'windows' in combined or 'linux' in combined or
-                        'apple' in combined or 'macos' in combined or 'google' in combined or
-                        'android' in combined or 'apache' in combined or 'nginx' in combined or
-                        'adobe' in combined or 'oracle' in combined or 'java' in combined or
-                        'python' in combined or 'wordpress' in combined or 'php' in combined or
-                        'sql' in combined or 'github' in combined or 'gitlab' in combined or
-                        'kubernetes' in combined or 'docker' in combined or 'vmware' in combined or
-                        'red hat' in combined or 'ubuntu' in combined or 'debian' in combined
-                    ) %}
-                    {% set is_iot = (
-                        'iot' in combined or 'router' in combined or 'firmware' in combined or
-                        'tenda' in combined or 'tp-link' in combined or 'd-link' in combined or
-                        'netgear' in combined or 'asus' in combined or 'linksys' in combined or
-                        'smart home' in combined or 'zigbee' in combined or 'bluetooth' in combined or
-                        'wifi' in combined or 'wi-fi' in combined or 'embedded' in combined or
-                        'camera' in combined or 'nvr' in combined or 'dvr' in combined
-                    ) %}
-                    {% set is_industrial = (
-                        'scada' in combined or 'plc' in combined or 'ics' in combined or
-                        'industrial' in combined or 'siemens' in combined or 'schneider' in combined or
-                        'rockwell' in combined or 'honeywell' in combined or 'ge ' in combined or
-                        'modbus' in combined or 'profinet' in combined or 'ot ' in combined or
-                        'hmi' in combined or 'dcs ' in combined
-                    ) %}
-                    {% set is_telecom = (
-                        'telecom' in combined or '5g' in combined or '4g' in combined or 'lte' in combined or
-                        'qualcomm' in combined or 'mediatek' in combined or 'baseband' in combined or
-                        'gsm' in combined or 'sim' in combined or 'voip' in combined or
-                        'sip ' in combined or 'cisco' in combined or 'juniper' in combined or
-                        'broadcom' in combined
-                    ) %}
-                    {% set is_medical = (
-                        'medical' in combined or 'hospital' in combined or 'patient' in combined or
-                        'healthcare' in combined or 'fda' in combined or 'hl7' in combined or
-                        'dicom' in combined or 'pacemaker' in combined or 'insulin' in combined or
-                        'clinical' in combined
-                    ) %}
-
-                    {# Build industry list #}
-                    {% set industries = [] %}
-                    {% if is_automotive %}{% set _ = industries.append('automotive') %}{% endif %}
-                    {% if is_it %}{% set _ = industries.append('it') %}{% endif %}
-                    {% if is_iot %}{% set _ = industries.append('iot') %}{% endif %}
-                    {% if is_industrial %}{% set _ = industries.append('industrial') %}{% endif %}
-                    {% if is_telecom %}{% set _ = industries.append('telecom') %}{% endif %}
-                    {% if is_medical %}{% set _ = industries.append('medical') %}{% endif %}
-
-                    <tr data-industries="{{ industries|join(',') if industries else 'unknown' }}"
-                        data-cve-id="{{ cve.cve_id }}">
-                        <!-- CVE ID -->
-                        <td class="col-id">
-                            <a href="https://nvd.nist.gov/vuln/detail/{{ cve.cve_id }}"
-                               target="_blank" class="cve-link" title="{{ cve.cve_id }}">{{ cve.cve_id }}</a>
-                            {% if use_ai and industries %}
-                            <div style="margin-top:4px;">
-                                {% for ind in industries[:2] %}
-                                <span class="ind-tag {{ ind }}" style="font-size:0.65rem; padding:1px 6px;">{{ ind }}</span>
-                                {% endfor %}
-                            </div>
+                    <tr>
+                        <td>
+                            <a href="https://nvd.nist.gov/vuln/detail/{{ cve.cve_id }}" target="_blank" 
+                               style="font-family: var(--mono); font-weight: 600; color: var(--primary);">
+                                {{ cve.cve_id }}
+                            </a>
+                            {% if cve.is_new %}
+                            <span class="new-badge">NEW</span>
                             {% endif %}
                         </td>
-
-                        <!-- CVSS -->
-                        <td class="col-cvss" style="text-align:center;">
+                        <td>
                             {% if cve.cvss_score %}
-                            <span class="cvss-val
+                            <span class="cvss-val 
                                 {% if cve.cvss_score|float >= 9 %}crit
                                 {% elif cve.cvss_score|float >= 7 %}high
                                 {% elif cve.cvss_score|float >= 4 %}med
                                 {% else %}low{% endif %}">
                                 {{ "%.1f"|format(cve.cvss_score|float) }}
                             </span>
-                            {% else %}<span style="color:#9ca3af;">N/A</span>{% endif %}
+                            {% else %}
+                            <span class="text-muted">N/A</span>
+                            {% endif %}
                         </td>
-
-                        <!-- Severity -->
-                        <td class="col-sev">
-                            <span class="sev-badge {{ cve.severity or 'Unknown' }}">{{ cve.severity or 'Unknown' }}</span>
+                        <td>
+                            <span class="severity-badge {{ cve.severity }}">
+                                {{ cve.severity }}
+                            </span>
                         </td>
-
-                        <!-- Published -->
-                        <td class="col-date" style="color:var(--text-muted); font-family:var(--mono); font-size:0.75rem;">
+                        <td style="font-family: monospace; color: var(--text-muted);">
                             {{ cve.published_date[:10] if cve.published_date else 'N/A' }}
                         </td>
-
-                        <!-- Description -->
-                        <td class="col-desc">
-                            <div class="cell-scroll">
-                                <div class="desc-box">{{ cve.description or 'No description available' }}</div>
+                        <td>
+                            <div style="max-height: 100px; overflow-y: auto; font-size: 0.8rem; line-height: 1.4;">
+                                {{ cve.description[:250] + '...' if cve.description and cve.description|length > 250 else cve.description }}
                             </div>
                         </td>
-
-                        {% if use_ai %}
-                        <!-- AI Summary — lazy loaded -->
-                        <td class="col-ai" id="ai-sum-{{ cve.cve_id | replace('-','_') }}">
-                            <div class="cell-scroll">
-                                {% set bad_summary = ['information not available', 'no ai summary available',
-                                                      'ai analysis unavailable', '', none] %}
-                                {% if cve.ai_summary and cve.ai_summary|lower not in bad_summary %}
-                                <div class="ai-box">
-                                    <i class="bi bi-robot text-primary me-1" style="font-size:0.75rem;"></i>
-                                    {{ cve.ai_summary }}
-                                </div>
-                                {% else %}
-                                <div class="ai-box pending ai-pending-cell">
-                                    <span class="skeleton-line"></span>
-                                    <span class="skeleton-line" style="width:70%"></span>
-                                </div>
-                                {% endif %}
-                            </div>
-                        </td>
-                        {% endif %}
-
-                        <!-- Affected Version — lazy loaded -->
-                        <td class="col-ver" style="text-align:center;" id="ai-ver-{{ cve.cve_id | replace('-','_') }}">
-                            {% if cve.affected_version and cve.affected_version not in ['Unknown','','None'] %}
-                            <span class="ver-badge" title="{{ cve.affected_version }}">{{ cve.affected_version }}</span>
-                            {% else %}
-                            <span class="text-muted ai-pending-cell" style="font-size:0.75rem;">—</span>
-                            {% endif %}
-                        </td>
-
-                        <!-- Fix Status — lazy loaded -->
-                        <td class="col-status" id="ai-fix-{{ cve.cve_id | replace('-','_') }}">
-                            {% set fs = cve.fix_status or 'Unknown' %}
-                            {% if fs|lower in ['fix available', 'fixed', 'fully fixed'] %}
-                            <span class="fix-badge available"><i class="bi bi-check-circle-fill"></i>{{ fs }}</span>
-                            {% elif fs|lower in ['workaround available', 'partially fixed'] %}
-                            <span class="fix-badge workaround"><i class="bi bi-exclamation-triangle-fill"></i>{{ fs }}</span>
-                            {% elif fs|lower in ['not fixed', 'pending', 'check needed'] %}
-                            <span class="fix-badge notfixed"><i class="bi bi-x-circle-fill"></i>{{ fs }}</span>
-                            {% else %}
-                            <span class="fix-badge unknown ai-pending-cell"><i class="bi bi-question-circle"></i>{{ fs }}</span>
-                            {% endif %}
-                            {% if cve.fixed_version and cve.fixed_version not in ['Unknown','','None'] %}
-                            <span class="fixed-in"><i class="bi bi-tag me-1"></i>{{ cve.fixed_version }}</span>
-                            {% endif %}
-                        </td>
-
-                        <!-- Remediation — lazy loaded -->
-                        <td class="col-rem" id="ai-rem-{{ cve.cve_id | replace('-','_') }}">
-                            <div class="cell-scroll">
-                                {% set bad_rem = ['information not available',
-                                                  'no remediation information available',
-                                                  'no remediation info yet', '', none] %}
-                                {% if cve.remediation and cve.remediation|lower not in bad_rem %}
-                                <div class="rem-box">
-                                    <i class="bi bi-shield-check text-success me-1" style="font-size:0.75rem;"></i>
-                                    {{ cve.remediation }}
-                                </div>
-                                {% else %}
-                                <div class="rem-box pending ai-pending-cell">
-                                    <span class="skeleton-line"></span>
-                                    <span class="skeleton-line" style="width:60%"></span>
-                                </div>
-                                {% endif %}
-                            </div>
-                        </td>
-
-                        <!-- Industry -->
-                        <td class="col-ind">
-                            <div class="cell-scroll" style="max-height:80px;">
-                                {% if industries %}
-                                    {% for ind in industries %}
-                                    <span class="ind-tag {{ ind }}">
-                                        {% if ind == 'automotive' %}🚗{% elif ind == 'it' %}💻{% elif ind == 'iot' %}📡{% elif ind == 'industrial' %}🏭{% elif ind == 'telecom' %}📱{% elif ind == 'medical' %}🏥{% endif %}
-                                        {{ ind|title }}
-                                    </span>
-                                    {% endfor %}
-                                {% else %}
-                                    <span style="color:#9ca3af; font-size:0.75rem;">—</span>
-                                {% endif %}
-                            </div>
-                        </td>
-
-                        <!-- Affected Companies -->
-                        <td class="col-comp">
-                            <div class="cell-scroll" style="max-height:80px;">
-                                {% if cve.affected_companies and cve.affected_companies|length > 0 %}
-                                    {% for c in cve.affected_companies %}
-                                        {% if c and c not in ['[]','Unknown','None',''] %}
-                                        <span class="comp-tag" title="{{ c }}">{{ c }}</span>
-                                        {% endif %}
-                                    {% endfor %}
-                                {% else %}
-                                    <span style="color:#9ca3af;">—</span>
-                                {% endif %}
-                            </div>
-                        </td>
-
-                        <!-- Matched Keywords -->
-                        <td class="col-match">
-                            <div class="cell-scroll" style="max-height:80px;">
-                                {% if cve.matched_keywords and cve.matched_keywords|length > 0 %}
-                                    {% for kw in cve.matched_keywords %}
-                                    <span class="match-tag" title="{{ kw }}">{{ kw }}</span>
-                                    {% endfor %}
-                                {% else %}
-                                    <span style="color:#9ca3af;">—</span>
-                                {% endif %}
-                            </div>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="text-center py-5">
+                            <i class="bi bi-inbox fs-1 d-block mb-3 text-muted"></i>
+                            <h5 class="text-muted">No CVEs Found</h5>
+                            <p class="text-muted">Try different keywords or check back later</p>
                         </td>
                     </tr>
                     {% endfor %}
@@ -1360,669 +701,168 @@
         </div>
     </div>
 
-    <!-- Debug section (AI mode only) -->
-    {% if use_ai and cves|length > 0 %}
-    <div style="margin-top:12px;">
-        <button class="btn btn-sm btn-outline-secondary" onclick="toggleDebug()" style="font-size:0.75rem;">
-            <i class="bi bi-bug me-1"></i>Debug: First CVE
-        </button>
-        <div class="debug-box mt-2" id="debugBox" style="display:none;">
-<span class="key">CVE ID:</span>       <span class="val">{{ cves[0].cve_id }}</span>
-<span class="key">AI Summary:</span>   <span class="val">{{ cves[0].ai_summary or 'None' }}</span>
-<span class="key">Fix Status:</span>   <span class="val">{{ cves[0].fix_status or 'None' }}</span>
-<span class="key">Remediation:</span>  <span class="val">{{ cves[0].remediation or 'None' }}</span>
-<span class="key">Aff. Version:</span> <span class="val">{{ cves[0].affected_version or 'None' }}</span>
-<span class="key">Fixed Ver.:</span>   <span class="val">{{ cves[0].fixed_version or 'None' }}</span>
-<span class="key">Companies:</span>    <span class="val">{{ cves[0].affected_companies }}</span>
-        </div>
-    </div>
-    {% endif %}
-
     <!-- Pagination -->
     {% if total_pages and total_pages > 1 %}
     <nav class="mt-4">
         <ul class="pagination justify-content-center">
             <li class="page-item {% if page == 1 %}disabled{% endif %}">
-                <a class="page-link" href="?page={{ page-1 }}&keywords={{ active_keywords|join(',') }}&severity={{ severity_filter }}&use_ai={{ 'true' if use_ai else 'false' }}&tab={{ request.args.get('tab','single') }}">
-                    <i class="bi bi-chevron-left"></i>
+                <a class="page-link" href="?page={{ page-1 }}{% if active_keywords %}&keywords={{ active_keywords|join(',') }}{% endif %}">
+                    <i class="bi bi-chevron-left"></i> Previous
                 </a>
             </li>
             {% for p in range(1, total_pages + 1) %}
                 {% if p >= page-2 and p <= page+2 %}
                 <li class="page-item {% if p == page %}active{% endif %}">
-                    <a class="page-link" href="?page={{ p }}&keywords={{ active_keywords|join(',') }}&severity={{ severity_filter }}&use_ai={{ 'true' if use_ai else 'false' }}&tab={{ request.args.get('tab','single') }}">{{ p }}</a>
+                    <a class="page-link" href="?page={{ p }}{% if active_keywords %}&keywords={{ active_keywords|join(',') }}{% endif %}">{{ p }}</a>
                 </li>
                 {% endif %}
             {% endfor %}
             <li class="page-item {% if page == total_pages %}disabled{% endif %}">
-                <a class="page-link" href="?page={{ page+1 }}&keywords={{ active_keywords|join(',') }}&severity={{ severity_filter }}&use_ai={{ 'true' if use_ai else 'false' }}&tab={{ request.args.get('tab','single') }}">
-                    <i class="bi bi-chevron-right"></i>
+                <a class="page-link" href="?page={{ page+1 }}{% if active_keywords %}&keywords={{ active_keywords|join(',') }}{% endif %}">
+                    Next <i class="bi bi-chevron-right"></i>
                 </a>
             </li>
         </ul>
     </nav>
     {% endif %}
 
-    {% else %}
-    <div class="empty-state">
-        <i class="bi bi-inbox d-block mb-3"></i>
-        <h5 class="text-muted">No CVEs Found</h5>
-        <p class="text-muted" style="font-size:0.85rem;">Try different keywords or upload a BOM file to begin</p>
+    <!-- Footer -->
+    <div class="footer">
+        <p class="mb-0">
+            <i class="bi bi-shield-check text-success"></i>
+            Daily CVE updates at 2:00 AM UTC • 
+            <i class="bi bi-envelope text-primary"></i>
+            Email alerts active for {{ env_boms|length if env_boms else '0' }} BOMs
+        </p>
     </div>
-    {% endif %}
 
-</div><!-- /app-body -->
-
-<!-- Spinner -->
-<div class="spinner-overlay" id="spinnerOverlay">
-    <div class="spinner-box">
-        <div class="spinner-border text-primary mb-3" style="width:2.5rem;height:2.5rem;" role="status"></div>
-        <h6 class="mb-1">Processing your request…</h6>
-        <p>AI analysis may take a few moments</p>
-    </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-// ── INDUSTRY CLASSIFICATION MAPS ──────────────────────────────
-const INDUSTRY_KEYWORDS = {
-    automotive: ['automotive','vehicle','infotainment','ecu','can bus','tesla','nissan','ford',
-                 'toyota','honda','harman','bosch','alps alpine','denso','valeo','continental',
-                 'magna','ota update','obd','telematics'],
-    it:         ['microsoft','windows','linux','apple','macos','google','android','apache','nginx',
-                 'adobe','oracle','java','python','wordpress','php','sql','github','gitlab',
-                 'kubernetes','docker','vmware','red hat','ubuntu','debian','fedora','suse'],
-    iot:        ['iot','router','firmware','tenda','tp-link','d-link','netgear','asus','linksys',
-                 'smart home','zigbee','bluetooth','wifi','wi-fi','embedded','camera','nvr','dvr',
-                 'smart device','connected'],
-    industrial: ['scada','plc','ics','industrial','siemens','schneider','rockwell','honeywell',
-                 'modbus','profinet','ot ','hmi','dcs ','factory'],
-    telecom:    ['telecom','5g','4g','lte','qualcomm','mediatek','baseband','gsm','sim','voip',
-                 'sip ','cisco','juniper','broadcom','ericsson','nokia'],
-    medical:    ['medical','hospital','patient','healthcare','fda','hl7','dicom','pacemaker',
-                 'insulin','clinical','biomedical'],
-};
-
-// ── COUNT INDUSTRIES ON LOAD ───────────────────────────────────
-function countIndustries() {
-    const rows = document.querySelectorAll('#cveTableBody tr');
-    const counts = { all: 0, automotive: 0, it: 0, iot: 0, industrial: 0, telecom: 0, medical: 0 };
-
-    rows.forEach(row => {
-        counts.all++;
-        const inds = (row.dataset.industries || '').split(',');
-        inds.forEach(ind => { if (counts[ind] !== undefined) counts[ind]++; });
-    });
-
-    Object.keys(counts).forEach(key => {
-        const el = document.getElementById(`count-${key}`);
-        if (el) el.textContent = counts[key];
-    });
-}
-
-// ── INDUSTRY FILTER ────────────────────────────────────────────
-let activeIndustry = 'all';
-
-function filterIndustry(industry, btn) {
-    activeIndustry = industry;
-
-    // Update button states
-    document.querySelectorAll('.ind-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-
-    const rows = document.querySelectorAll('#cveTableBody tr');
-    let visible = 0;
-
-    rows.forEach(row => {
-        if (industry === 'all') {
-            row.classList.remove('hidden-row');
-            visible++;
-        } else {
-            const inds = (row.dataset.industries || '').split(',');
-            if (inds.includes(industry)) {
-                row.classList.remove('hidden-row');
-                visible++;
-            } else {
-                row.classList.add('hidden-row');
-            }
-        }
-    });
-
-    // Update count display
-    const countEl = document.getElementById('visibleCount');
-    if (countEl) countEl.textContent = visible;
-
-    const note = document.getElementById('industryNote');
-    const noteText = document.getElementById('industryNoteText');
-    if (industry === 'all') {
-        note.style.display = 'none';
-    } else {
-        const labels = {
-            automotive: '🚗 Automotive',
-            it: '💻 IT / Software',
-            iot: '📡 IoT / Network',
-            industrial: '🏭 Industrial',
-            telecom: '📱 Telecom',
-            medical: '🏥 Medical'
-        };
-        noteText.textContent = `Showing ${visible} CVEs for ${labels[industry] || industry}`;
-        note.style.display = 'inline';
-    }
-}
-
-// ── DB STATS (keyword-aware) ───────────────────────────────────
-// Keywords injected server-side — no URL decoding needed
-const PAGE_KEYWORDS = {{ active_keywords | tojson }};
-const PAGE_SEVERITY = {{ severity_filter | tojson }};
-
-async function fetchStats() {
-    const keywords = PAGE_KEYWORDS.join(',');
-    const severity  = PAGE_SEVERITY || '';
-
-    try {
-        // Always fetch date range from full /stats endpoint
-        const fullR = await fetch('/stats');
-        if (fullR.ok) {
-            const full = await fullR.json();
-            if (full.oldest_cve && full.newest_cve) {
-                const fmt = dt => new Date(dt).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
-                document.getElementById('dateRangeText').textContent = `${fmt(full.oldest_cve)} – ${fmt(full.newest_cve)}`;
-            }
-            const aiEl = document.getElementById('aiCount');
-            if (aiEl) aiEl.textContent = (full.ai_enhanced || 0).toLocaleString();
-        }
-
-        // Fetch keyword-filtered stats for Total + Severity
-        const statsUrl = keywords
-            ? `/keyword-stats?keywords=${encodeURIComponent(keywords)}&severity=${encodeURIComponent(severity)}`
-            : `/keyword-stats`;
-
-        const r = await fetch(statsUrl);
-        if (!r.ok) return;
-        const d = await r.json();
-
-        // Update total count
-        document.getElementById('totalCves').textContent = (d.total || 0).toLocaleString();
-
-        // Update severity counts
-        document.getElementById('criticalCount').textContent = (d.critical || 0).toLocaleString();
-        document.getElementById('highCount').textContent     = (d.high     || 0).toLocaleString();
-        document.getElementById('mediumCount').textContent   = (d.medium   || 0).toLocaleString();
-        document.getElementById('lowCount').textContent      = (d.low      || 0).toLocaleString();
-
-        // Show context label if filtered by keyword
-        const ctxEl   = document.getElementById('statsContext');
-        const lblTotal = document.getElementById('totalLabel');
-        const lblSev   = document.getElementById('sevLabel');
-
-        if (d.filtered && keywords) {
-            // Show keyword pill(s) next to the count
-            const kwList = keywords.split(',').map(k => k.trim()).filter(Boolean);
-            const label  = kwList.length === 1
-                ? `for "${kwList[0]}"`
-                : `for ${kwList.length} keywords`;
-
-            ctxEl.textContent   = label;
-            ctxEl.style.display = 'inline';
-            lblTotal.textContent = 'Matching CVEs';
-            lblSev.textContent   = 'Severity Breakdown';
-
-            // Colour the stat card green border to indicate filtered mode
-            const card = document.getElementById('totalCard');
-            if (card) card.style.borderLeft = '3px solid #059669';
-        } else {
-            ctxEl.style.display  = 'none';
-            lblTotal.textContent = 'Total CVEs';
-            lblSev.textContent   = 'Severity (All CVEs)';
-            const card = document.getElementById('totalCard');
-            if (card) card.style.borderLeft = '';
-        }
-
-    } catch(e) {
-        console.error('Stats error:', e);
-    }
-}
-
-// ── AI TOGGLE ─────────────────────────────────────────────────
-function toggleAI() {
-    const on = document.getElementById('aiToggle').checked;
-    const url = new URL(window.location.href);
-    url.searchParams.set('use_ai', on ? 'true' : 'false');
-    url.searchParams.delete('page');
-    window.location.href = url.toString();
-}
-
-// ── AI PROVIDER PANEL ─────────────────────────────────────────
-
-const PROVIDER_COLORS = {
-    deepseek: '#34d399',
-    openai:   '#a78bfa',
-    claude:   '#f97316',
-    ollama:   '#38bdf8',
-};
-
-// Load saved settings from localStorage on page load
-(function initProviderUI() {
-    const saved = getSavedAI();
-    if (saved.provider) {
-        const opt = document.querySelector(`[data-provider="${saved.provider}"]`);
-        if (opt) activateProviderOpt(opt, false);
-    }
-    if (saved.key) {
-        const inp = document.getElementById('aiApiKeyInput');
-        if (inp) inp.value = saved.key;
-    }
-    if (saved.model) {
-        const sel = document.getElementById('aiModelSelect');
-        if (sel) { for (let o of sel.options) { if (o.value === saved.model) o.selected = true; } }
-    }
-    updateProviderBtn(saved.provider || 'deepseek');
-})();
-
-function getSavedAI() {
-    try {
-        return JSON.parse(localStorage.getItem('cve_ai_settings') || '{}');
-    } catch(e) { return {}; }
-}
-
-function saveAItoStorage(provider, key, model) {
-    localStorage.setItem('cve_ai_settings', JSON.stringify({ provider, key, model }));
-}
-
-function toggleProviderPanel(e) {
-    e.stopPropagation();
-    const panel = document.getElementById('aiProviderPanel');
-    panel.classList.toggle('open');
-}
-
-// Close panel on outside click
-document.addEventListener('click', function(e) {
-    const panel = document.getElementById('aiProviderPanel');
-    const btn   = document.getElementById('providerBtn');
-    if (panel && !panel.contains(e.target) && e.target !== btn && !btn.contains(e.target)) {
-        panel.classList.remove('open');
-    }
+document.addEventListener('DOMContentLoaded', function() {
+    console.log("DOM loaded, loading stats...");
+    loadStats();
+    loadRecentAlerts();
+    updateTimestamp();
+    
+    // Count NEW badges
+    const newCount = document.querySelectorAll('.new-badge').length;
+    document.getElementById('newCount').textContent = newCount;
 });
 
-function selectProvider(el) {
-    activateProviderOpt(el, true);
-}
-
-function activateProviderOpt(el, resetKey) {
-    document.querySelectorAll('.provider-opt').forEach(o => o.classList.remove('active'));
-    el.classList.add('active');
-
-    const provider     = el.dataset.provider;
-    const models       = JSON.parse(el.dataset.models || '[]');
-    const placeholder  = el.dataset.placeholder || 'API key';
-    const isOllama     = provider === 'ollama';
-
-    // Update key input
-    const keyRow = document.getElementById('apiKeyRow');
-    const keyInp = document.getElementById('aiApiKeyInput');
-    keyRow.style.opacity    = isOllama ? '0.4' : '1';
-    keyInp.disabled         = isOllama;
-    keyInp.placeholder      = isOllama ? 'No API key needed for Ollama' : placeholder;
-    if (resetKey && !isOllama) keyInp.value = '';
-
-    // Update model dropdown
-    const sel = document.getElementById('aiModelSelect');
-    sel.innerHTML = '';
-    const saved = getSavedAI();
-    models.forEach(m => {
-        const o = document.createElement('option');
-        o.value = m; o.textContent = m;
-        if (m === saved.model) o.selected = true;
-        sel.appendChild(o);
-    });
-
-    updateProviderBtn(provider);
-    document.getElementById('aiTestResult').textContent = '';
-    document.getElementById('aiTestResult').className = 'ai-test-result';
-}
-
-function updateProviderBtn(provider) {
-    const labels = { deepseek:'DeepSeek', openai:'OpenAI', claude:'Claude', ollama:'Ollama (Local)' };
-    const dot    = document.getElementById('providerDot');
-    const lbl    = document.getElementById('providerBtnLabel');
-    if (dot) dot.style.background = PROVIDER_COLORS[provider] || '#94a3b8';
-    if (lbl) lbl.textContent = labels[provider] || provider;
-}
-
-function toggleKeyVisibility() {
-    const inp  = document.getElementById('aiApiKeyInput');
-    const icon = document.getElementById('eyeIcon');
-    if (inp.type === 'password') {
-        inp.type = 'text';
-        icon.className = 'bi bi-eye-slash';
-    } else {
-        inp.type = 'password';
-        icon.className = 'bi bi-eye';
-    }
-}
-
-function onApiKeyChange() {
-    document.getElementById('aiTestResult').textContent = '';
-}
-
-async function applyAiSettings() {
-    const provider = document.querySelector('.provider-opt.active')?.dataset.provider || 'deepseek';
-    const api_key  = document.getElementById('aiApiKeyInput').value.trim();
-    const model    = document.getElementById('aiModelSelect').value;
-    const btn      = document.getElementById('applyAiBtn');
-    const result   = document.getElementById('aiTestResult');
-
-    if (provider !== 'ollama' && !api_key) {
-        result.textContent = '⚠ Please enter your API key';
-        result.className   = 'ai-test-result err';
-        return;
-    }
-
-    btn.disabled = true;
-    document.getElementById('applyBtnText').innerHTML =
-        '<span class="spinner-border spinner-border-sm me-1" style="width:.75rem;height:.75rem"></span>Testing...';
-    result.textContent = '';
-
-    try {
-        const resp = await fetch('/settings/save', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider, api_key, model })
-        });
-        const data = await resp.json();
-
-        if (data.ok) {
-            result.textContent = '✓ ' + data.message;
-            result.className   = 'ai-test-result ok';
-            saveAItoStorage(provider, api_key, model);
-            updateProviderBtn(provider);
-            // Auto-close panel after success
-            setTimeout(() => {
-                document.getElementById('aiProviderPanel').classList.remove('open');
-                result.textContent = '';
-            }, 2000);
-        } else {
-            result.textContent = '✗ ' + data.message;
-            result.className   = 'ai-test-result err';
-        }
-    } catch(e) {
-        result.textContent = '✗ Connection error';
-        result.className   = 'ai-test-result err';
-    }
-
-    btn.disabled = false;
-    document.getElementById('applyBtnText').innerHTML =
-        '<i class="bi bi-check-lg me-1"></i>Apply &amp; Test';
-}
-
-// ── KEYWORD REMOVE ────────────────────────────────────────────
-function removeKeyword(kw) {
-    const p = new URLSearchParams(window.location.search);
-    let kws = (p.get('keywords') || '').split(',').filter(k => k && k !== kw);
-    if (kws.length > 0) {
-        p.set('keywords', kws.join(','));
-        window.location.href = '?' + p.toString();
-    } else {
-        window.location.href = '/';
-    }
-}
-
-// ── LOADING ───────────────────────────────────────────────────
-function showLoading() {
-    document.getElementById('spinnerOverlay').classList.add('show');
-    setTimeout(() => document.getElementById('spinnerOverlay').classList.remove('show'), 30000);
-}
-
-// ── DEBUG TOGGLE ──────────────────────────────────────────────
-function toggleDebug() {
-    const el = document.getElementById('debugBox');
-    if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
-}
-
-// ── KEYWORD COUNTS ────────────────────────────────────────────
-async function fetchKeywordCounts() {
-    const badges = document.querySelectorAll('[id^="kwcount-"]');
-    if (!badges.length) return;
-
-    const params = new URLSearchParams(window.location.search);
-    const keywords = params.get('keywords') || '';
-    const severity  = params.get('severity') || '';
-
-    if (!keywords) return;
-
-    try {
-        const r = await fetch(`/keyword-counts?keywords=${encodeURIComponent(keywords)}&severity=${encodeURIComponent(severity)}`);
-        if (!r.ok) return;
-        const counts = await r.json();
-
-        const kwList = keywords.split(',').map(k => k.trim()).filter(Boolean);
-        kwList.forEach((kw, i) => {
-            const el = document.getElementById(`kwcount-${i + 1}`);
-            if (!el) return;
-            const n = counts[kw] ?? 0;
-            el.textContent = n.toLocaleString();
-            el.title = `${n.toLocaleString()} total CVEs match "${kw}" in the full database`;
-
-            if (n === 0) {
-                el.style.background = 'rgba(220,38,38,0.12)';
-                el.style.color = '#b91c1c';
-            } else if (n < 10) {
-                el.style.background = 'rgba(217,119,6,0.12)';
-                el.style.color = '#92400e';
-            } else if (n < 100) {
-                el.style.background = 'rgba(2,132,199,0.12)';
-                el.style.color = '#0369a1';
-            } else {
-                el.style.background = 'rgba(5,122,85,0.12)';
-                el.style.color = '#065f46';
+function loadStats() {
+    console.log("Fetching stats from /stats");
+    fetch('/stats')
+        .then(response => {
+            console.log("Stats response status:", response.status);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
             }
+            return response.json();
+        })
+        .then(data => {
+            console.log("Stats data received:", data);
+            
+            // Update total CVEs
+            const totalEl = document.getElementById('totalCves');
+            if (totalEl) totalEl.textContent = data.total_cves || 0;
+            
+            // Update severity counts
+            const criticalEl = document.getElementById('criticalCount');
+            if (criticalEl) criticalEl.textContent = data.critical || 0;
+            
+            const highEl = document.getElementById('highCount');
+            if (highEl) highEl.textContent = data.high || 0;
+            
+            const mediumEl = document.getElementById('mediumCount');
+            if (mediumEl) mediumEl.textContent = data.medium || 0;
+            
+            const lowEl = document.getElementById('lowCount');
+            if (lowEl) lowEl.textContent = data.low || 0;
+            
+            // Update date range
+            const dateRangeEl = document.getElementById('dateRangeText');
+            if (dateRangeEl && data.date_range) {
+                dateRangeEl.textContent = data.date_range;
+            } else if (dateRangeEl && data.oldest_cve && data.newest_cve) {
+                dateRangeEl.textContent = `${data.oldest_cve.substring(0,10)} – ${data.newest_cve.substring(0,10)}`;
+            }
+            
+            // Update AI count
+            const aiCountEl = document.getElementById('aiCount');
+            if (aiCountEl) aiCountEl.textContent = data.ai_enhanced || 0;
+        })
+        .catch(error => {
+            console.error('Stats error:', error);
+            // Set fallback values
+            document.getElementById('totalCves').textContent = '—';
+            document.getElementById('criticalCount').textContent = '0';
+            document.getElementById('highCount').textContent = '0';
+            document.getElementById('mediumCount').textContent = '0';
+            document.getElementById('lowCount').textContent = '0';
         });
-    } catch(e) {
-        console.error('Keyword count error:', e);
-        document.querySelectorAll('[id^="kwcount-"]').forEach(el => {
-            el.textContent = '?';
-        });
-    }
 }
 
-
-// ── LAZY AI LOADER ────────────────────────────────────────────
-const AI_BATCH_SIZE  = 5;
-const AI_BATCH_DELAY = 400;
-
-function collectPendingCVEs() {
-    const pending = [];
-    document.querySelectorAll('#cveTableBody tr').forEach(row => {
-        const cveId = row.dataset.cveId;
-        if (!cveId) return;
-        if (row.querySelector('.ai-pending-cell')) {
-            const descEl = row.querySelector('.desc-box');
-            pending.push({ cve_id: cveId, description: descEl ? descEl.textContent.trim() : '' });
-        }
-    });
-    return pending;
-}
-
-function escapeHtml(str) {
-    return String(str || '')
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function updateRowWithAI(cveId, data) {
-    const sid = cveId.replace(/-/g, '_');
-
-    const sumCell = document.getElementById(`ai-sum-${sid}`);
-    if (sumCell && sumCell.querySelector('.ai-pending-cell') && data.summary) {
-        sumCell.querySelector('.cell-scroll').innerHTML =
-            `<div class="ai-box"><i class="bi bi-robot text-primary me-1" style="font-size:.75rem;"></i>${escapeHtml(data.summary)}</div>`;
-    }
-
-    const verCell = document.getElementById(`ai-ver-${sid}`);
-    if (verCell && data.affected_version && data.affected_version !== 'Unknown') {
-        verCell.innerHTML = `<span class="ver-badge">${escapeHtml(data.affected_version)}</span>`;
-    }
-
-    const fixCell = document.getElementById(`ai-fix-${sid}`);
-    if (fixCell && data.fix_status) {
-        const fs  = data.fix_status;
-        const fsl = fs.toLowerCase();
-        let badge = '';
-        if (['fix available','fixed','fully fixed'].includes(fsl))
-            badge = `<span class="fix-badge available"><i class="bi bi-check-circle-fill"></i>${escapeHtml(fs)}</span>`;
-        else if (['workaround available','partially fixed'].includes(fsl))
-            badge = `<span class="fix-badge workaround"><i class="bi bi-exclamation-triangle-fill"></i>${escapeHtml(fs)}</span>`;
-        else if (['not fixed','pending','check needed'].includes(fsl))
-            badge = `<span class="fix-badge notfixed"><i class="bi bi-x-circle-fill"></i>${escapeHtml(fs)}</span>`;
-        else
-            badge = `<span class="fix-badge unknown"><i class="bi bi-question-circle"></i>${escapeHtml(fs)}</span>`;
-        if (data.fixed_version && data.fixed_version !== 'Unknown')
-            badge += `<span class="fixed-in"><i class="bi bi-tag me-1"></i>${escapeHtml(data.fixed_version)}</span>`;
-        fixCell.innerHTML = badge;
-    }
-
-    const remCell = document.getElementById(`ai-rem-${sid}`);
-    if (remCell && remCell.querySelector('.ai-pending-cell') && data.remediation) {
-        remCell.querySelector('.cell-scroll').innerHTML =
-            `<div class="rem-box"><i class="bi bi-shield-check text-success me-1" style="font-size:.75rem;"></i>${escapeHtml(data.remediation)}</div>`;
-    }
-}
-
-async function runLazyAI() {
-    const toggle = document.getElementById('aiToggle');
-    if (!toggle || !toggle.checked) return;
-
-    const pending = collectPendingCVEs();
-    if (!pending.length) return;
-
-    const bar   = document.getElementById('aiProgressBar');
-    const fill  = document.getElementById('aiProgressFill');
-    const toast = document.getElementById('aiStatusToast');
-    const txt   = document.getElementById('aiStatusText');
-
-    bar.style.display = 'block';
-    toast.classList.add('show');
-
-    let done = 0;
-    const total = pending.length;
-
-    for (let i = 0; i < pending.length; i += AI_BATCH_SIZE) {
-        const batch = pending.slice(i, i + AI_BATCH_SIZE);
-        txt.textContent = `AI analyzing ${done + 1}–${Math.min(done + batch.length, total)} of ${total}…`;
-
-        try {
-            const resp = await fetch('/api/ai-analyze', {
-              credentials: 'include',  // CRITICAL: send session cookie so server can read API key
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cves: batch })
+function loadRecentAlerts() {
+    fetch('/api/alerts/recent')
+        .then(r => r.json())
+        .then(alerts => {
+            const container = document.getElementById('recentAlerts');
+            
+            if (!alerts || alerts.length === 0) {
+                container.innerHTML = '<div class="text-muted text-center py-3">No alerts in last 24 hours</div>';
+                return;
+            }
+            
+            let html = '';
+            alerts.forEach(alert => {
+                const date = new Date(alert.sent_at);
+                const timeStr = date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                const dateStr = date.toLocaleDateString();
+                
+                html += `
+                    <div class="alert-item">
+                        <div class="d-flex justify-content-between">
+                            <strong>${alert.cve_id}</strong>
+                            <span class="badge bg-info">${alert.keyword}</span>
+                        </div>
+                        <div class="small">
+                            <i class="bi bi-envelope"></i> ${alert.email}
+                            <span class="badge bg-secondary">${alert.bom_name || 'BOM'}</span>
+                        </div>
+                        <div class="time text-end">
+                            <i class="bi bi-clock"></i> ${dateStr} ${timeStr}
+                        </div>
+                    </div>
+                `;
             });
-            if (resp.ok) {
-                const results = await resp.json();
-                Object.entries(results).forEach(([id, d]) => { if (!d.error) updateRowWithAI(id, d); });
-            }
-        } catch(e) { console.error('AI batch error:', e); }
-
-        done += batch.length;
-        fill.style.width = `${Math.round((done / total) * 100)}%`;
-        if (i + AI_BATCH_SIZE < pending.length)
-            await new Promise(r => setTimeout(r, AI_BATCH_DELAY));
-    }
-
-    fill.style.width = '100%';
-    txt.textContent  = `✓ AI analysis complete (${total} CVEs)`;
-    setTimeout(() => { bar.style.display = 'none'; fill.style.width = '0%'; toast.classList.remove('show'); }, 2500);
+            container.innerHTML = html;
+        })
+        .catch(err => {
+            document.getElementById('recentAlerts').innerHTML = 
+                '<div class="text-muted text-center py-3">Unable to load alerts</div>';
+        });
 }
 
-// ── INIT ──────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-    fetchStats();
-    countIndustries();
-    fetchKeywordCounts();
-
-    // Kick off lazy AI after a short delay so the page paints first
-    setTimeout(runLazyAI, 600);
-
-    const tab = new URLSearchParams(window.location.search).get('tab');
-    if (tab) {
-        const el = document.getElementById(tab + '-tab');
-        if (el) new bootstrap.Tab(el).show();
-    }
-
-    const err = new URLSearchParams(window.location.search).get('error');
-    if (err) alert(decodeURIComponent(err));
-
-    document.querySelectorAll('form').forEach(form => {
-        form.addEventListener('submit', e => {
-            if (form.id === 'singleSearchForm') {
-                const kw = form.querySelector('input[name="keyword"]');
-                if (kw && !kw.value.trim()) { e.preventDefault(); return; }
-            }
-            if (form.id === 'multiForm') {
-                const ta = form.querySelector('textarea');
-                if (ta && !ta.value.trim()) { e.preventDefault(); return; }
-                showLoading();
-            }
-        });
-    });
-
-    document.getElementById('bom-file')?.addEventListener('change', function() {
-        if (this.files.length) { document.getElementById('bomForm').submit(); showLoading(); }
-    });
-
-    const zone = document.querySelector('.upload-zone');
-    if (zone) {
-        ['dragenter','dragover','dragleave','drop'].forEach(ev =>
-            zone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); }));
-        zone.addEventListener('dragover',  () => zone.style.borderColor = 'var(--primary)');
-        zone.addEventListener('dragleave', () => zone.style.borderColor = '#93c5fd');
-        zone.addEventListener('drop', e => {
-            const fi = document.getElementById('bom-file');
-            if (fi && e.dataTransfer.files.length) {
-                fi.files = e.dataTransfer.files;
-                document.getElementById('bomForm').submit();
-                showLoading();
-            }
-        });
-    }
-});
-
-// Check if AI key is configured — show banner if not
-async function checkAiKeyStatus() {
-    try {
-        const r = await fetch('/api/ai-status', {credentials: 'include'});
-        const d = await r.json();
-        if (!d.has_key && d.ai_enabled) {
-            const banner = document.createElement('div');
-            banner.id = 'aiKeyBanner';
-            banner.innerHTML = `
-              <div style="position:fixed;bottom:16px;right:16px;background:#1e293b;color:#f1f5f9;
-                           padding:14px 18px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.4);
-                           z-index:9999;max-width:320px;font-size:.83rem;border-left:4px solid #f59e0b">
-                <div style="font-weight:700;margin-bottom:4px">
-                  <i class="bi bi-exclamation-triangle-fill" style="color:#f59e0b"></i>
-                  No AI API Key Set
-                </div>
-                <div style="color:#94a3b8;margin-bottom:10px">
-                  AI summaries are unavailable. Add your ${d.provider} API key to enable AI analysis.
-                </div>
-                <a href="/settings" style="background:#3b82f6;color:white;padding:6px 14px;
-                    border-radius:7px;text-decoration:none;font-weight:600;font-size:.8rem">
-                  ⚙️ Add API Key
-                </a>
-                <button onclick="document.getElementById('aiKeyBanner').remove()"
-                  style="background:transparent;border:none;color:#64748b;margin-left:8px;
-                         cursor:pointer;font-size:1rem">✕</button>
-              </div>`;
-            document.body.appendChild(banner);
-        }
-    } catch(e) {}
+function updateTimestamp() {
+    const now = new Date();
+    const options = { 
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+    };
+    document.getElementById('lastUpdate').textContent = now.toLocaleDateString('en-US', options);
 }
-document.addEventListener('DOMContentLoaded', () => {
-    // Only check if AI is enabled on page
-    const aiToggle = document.getElementById('aiToggle');
-    if (aiToggle && aiToggle.checked) checkAiKeyStatus();
-});
+
+function refreshData() {
+    location.reload();
+}
+
+// Auto-refresh every 5 minutes (optional)
+setTimeout(() => {
+    location.reload();
+}, 300000);
 </script>
+
 </body>
 </html>
