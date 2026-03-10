@@ -1010,6 +1010,7 @@ def extract_affected_companies(description: str) -> list:
 # ============================================================
 # API ROUTES - FIXED STATS ROUTE
 # ============================================================
+
 @app.route("/stats")
 def stats():
     """Get statistics about CVEs in the database"""
@@ -1038,17 +1039,22 @@ def stats():
         cursor.execute("SELECT COUNT(*) FROM cve_ai_analysis")
         ai_count = cursor.fetchone()[0]
         
-        conn.close()
-        
-        # Get date range for coverage
-        date_range_text = "Loading..."
+        # Get date range
+        oldest = None
+        newest = None
         try:
             cursor.execute("SELECT MIN(published), MAX(published) FROM cves")
-            dates = cursor.fetchone()
-            if dates[0] and dates[1]:
-                date_range_text = f"{dates[0][:10]} to {dates[1][:10]}"
+            row = cursor.fetchone()
+            oldest = row[0]
+            newest = row[1]
         except:
             pass
+        
+        conn.close()
+        
+        date_range_text = "No data"
+        if oldest and newest:
+            date_range_text = f"{oldest[:10]} – {newest[:10]}"
         
         print(f"📊 Stats: Total={total}, Crit={critical}, High={high}, Med={medium}, Low={low}")
         
@@ -1059,8 +1065,8 @@ def stats():
             "medium": medium,
             "low": low,
             "ai_enhanced": ai_count,
-            "oldest_cve": dates[0] if 'dates' in locals() and dates[0] else None,
-            "newest_cve": dates[1] if 'dates' in locals() and dates[1] else None,
+            "oldest_cve": oldest,
+            "newest_cve": newest,
             "date_range": date_range_text
         })
     except Exception as e:
