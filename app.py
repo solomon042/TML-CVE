@@ -1011,56 +1011,31 @@ def extract_affected_companies(description: str) -> list:
 # API ROUTES - FIXED STATS ROUTE
 # ============================================================
 
-@app.route("/stats")
 def stats():
-    """Get statistics about CVEs in the database"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Get total count
-        cursor.execute("SELECT COUNT(*) FROM cves")
-        total = cursor.fetchone()[0]
-        
-        # Get severity counts
-        cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 9.0")
-        critical = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 7.0 AND cvss_score < 9.0")
-        high = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 4.0 AND cvss_score < 7.0")
-        medium = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score > 0 AND cvss_score < 4.0")
-        low = cursor.fetchone()[0]
-        
-        # Get AI count
-        cursor.execute("SELECT COUNT(*) FROM cve_ai_analysis")
-        ai_count = cursor.fetchone()[0]
-        
+    conn   = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cves'")
+    if not cursor.fetchone():
         conn.close()
-        
-        print(f"📊 Stats: Total={total}, Crit={critical}, High={high}, Med={medium}, Low={low}")
-        
-        return jsonify({
-            "total_cves": total,
-            "critical": critical,
-            "high": high,
-            "medium": medium,
-            "low": low,
-            "ai_enhanced": ai_count
-        })
-    except Exception as e:
-        print(f"❌ Stats error: {e}")
-        return jsonify({
-            "total_cves": 0,
-            "critical": 0,
-            "high": 0,
-            "medium": 0,
-            "low": 0,
-            "ai_enhanced": 0
-        })
+        return jsonify({"total_cves":0,"critical":0,"high":0,"medium":0,"low":0,
+                        "ai_enhanced":0,"oldest_cve":None,"newest_cve":None})
+
+    cursor.execute("SELECT COUNT(*) FROM cves");                                              total       = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 9.0");                      critical    = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 7.0 AND cvss_score < 9.0"); high        = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 4.0 AND cvss_score < 7.0"); medium      = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score > 0 AND cvss_score < 4.0");   low         = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM cve_ai_analysis");                                   ai_enhanced = cursor.fetchone()[0]
+    try:
+        cursor.execute(f"SELECT MIN({DATE_COLUMN}), MAX({DATE_COLUMN}) FROM cves")
+        date_range = cursor.fetchone()
+    except Exception:
+        date_range = (None, None)
+    conn.close()
+    return jsonify({"total_cves":total,"critical":critical,"high":high,"medium":medium,
+                    "low":low,"ai_enhanced":ai_enhanced,
+                    "oldest_cve":date_range[0] if date_range else None,
+                    "newest_cve":date_range[1] if date_range else None})
 
 @app.route("/keyword-stats")
 def keyword_stats():
