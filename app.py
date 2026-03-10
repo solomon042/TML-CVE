@@ -1012,30 +1012,72 @@ def extract_affected_companies(description: str) -> list:
 # ============================================================
 @app.route("/stats")
 def stats():
-    conn   = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cves'")
-    if not cursor.fetchone():
-        conn.close()
-        return jsonify({"total_cves":0,"critical":0,"high":0,"medium":0,"low":0,
-                        "ai_enhanced":0,"oldest_cve":None,"newest_cve":None})
-
-    cursor.execute("SELECT COUNT(*) FROM cves");                                              total       = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 9.0");                      critical    = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 7.0 AND cvss_score < 9.0"); high        = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 4.0 AND cvss_score < 7.0"); medium      = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score > 0 AND cvss_score < 4.0");   low         = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM cve_ai_analysis");                                   ai_enhanced = cursor.fetchone()[0]
+    """Get statistics about CVEs in the database"""
     try:
-        cursor.execute(f"SELECT MIN({DATE_COLUMN}), MAX({DATE_COLUMN}) FROM cves")
-        date_range = cursor.fetchone()
-    except Exception:
-        date_range = (None, None)
-    conn.close()
-    return jsonify({"total_cves":total,"critical":critical,"high":high,"medium":medium,
-                    "low":low,"ai_enhanced":ai_enhanced,
-                    "oldest_cve":date_range[0] if date_range else None,
-                    "newest_cve":date_range[1] if date_range else None})
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get total count
+        cursor.execute("SELECT COUNT(*) FROM cves")
+        total = cursor.fetchone()[0]
+        
+        # Get severity counts
+        cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 9.0")
+        critical = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 7.0 AND cvss_score < 9.0")
+        high = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 4.0 AND cvss_score < 7.0")
+        medium = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score > 0 AND cvss_score < 4.0")
+        low = cursor.fetchone()[0]
+        
+        # Get AI count
+        cursor.execute("SELECT COUNT(*) FROM cve_ai_analysis")
+        ai_count = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        # Get date range for coverage
+        date_range_text = "Loading..."
+        try:
+            cursor.execute("SELECT MIN(published), MAX(published) FROM cves")
+            dates = cursor.fetchone()
+            if dates[0] and dates[1]:
+                date_range_text = f"{dates[0][:10]} to {dates[1][:10]}"
+        except:
+            pass
+        
+        print(f"📊 Stats: Total={total}, Crit={critical}, High={high}, Med={medium}, Low={low}")
+        
+        return jsonify({
+            "total_cves": total,
+            "critical": critical,
+            "high": high,
+            "medium": medium,
+            "low": low,
+            "ai_enhanced": ai_count,
+            "oldest_cve": dates[0] if 'dates' in locals() and dates[0] else None,
+            "newest_cve": dates[1] if 'dates' in locals() and dates[1] else None,
+            "date_range": date_range_text
+        })
+    except Exception as e:
+        print(f"❌ Stats error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "total_cves": 0,
+            "critical": 0,
+            "high": 0,
+            "medium": 0,
+            "low": 0,
+            "ai_enhanced": 0,
+            "oldest_cve": None,
+            "newest_cve": None,
+            "date_range": "Error loading stats"
+        })
 
 @app.route("/keyword-stats")
 def keyword_stats():
