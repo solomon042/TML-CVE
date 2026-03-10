@@ -1010,7 +1010,7 @@ def extract_affected_companies(description: str) -> list:
 # ============================================================
 # API ROUTES - FIXED STATS ROUTE
 # ============================================================
-
+@app.route("/stats")
 def stats():
     conn   = get_db_connection()
     cursor = conn.cursor()
