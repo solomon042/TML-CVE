@@ -741,22 +741,6 @@
         {% endif %}
     </div>
 
-    <!-- ═══════════ RECENT ALERTS (last 24h) ═══════════ -->
-    <div class="alerts-section">
-        <div class="section-title">
-            <i class="bi bi-bell-fill"></i>
-            Recent Alerts (Last 24h)
-            <span id="alertsBadge" style="display:none;background:#fee2e2;color:#991b1b;
-                  font-family:var(--mono);font-size:.68rem;font-weight:700;
-                  padding:1px 7px;border-radius:10px;"></span>
-        </div>
-        <div id="alertsBody">
-            <div class="alerts-empty">
-                <i class="bi bi-hourglass-split me-2"></i>Loading alerts…
-            </div>
-        </div>
-    </div>
-
     <!-- ═══════════ SEARCH PANEL ═══════════ -->
     <div class="search-panel">
         <ul class="nav nav-tabs" role="tablist">
@@ -1413,9 +1397,8 @@ async function triggerUpdate() {
 
         setTimeout(async () => {
             await loadStats();
-            await loadAlerts();
             bannerText.textContent = 'Update complete. Stats refreshed.';
-            setTimeout(() => loadStats(), 0); // update banner with new last_update
+            setTimeout(() => loadStats(), 0);
         }, 15000);
 
     } catch(e) {
@@ -1727,7 +1710,6 @@ function initBomUpload() {
 // ═══════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
     loadStats();
-    loadAlerts();
     loadKeywordCounts();
     countIndustries();
     initBomUpload();
@@ -1759,7 +1741,7 @@ document.addEventListener('DOMContentLoaded', () => {
         div.innerHTML = `<i class="bi bi-cloud-arrow-down me-2"></i>Database update started in background. Stats will refresh automatically.
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
         document.querySelector('.app-body').prepend(div);
-        setTimeout(() => { loadStats(); loadAlerts(); }, 15000);
+        setTimeout(() => { loadStats(); }, 15000);
     }
 
     // Form validation
