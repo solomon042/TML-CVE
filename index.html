@@ -1,407 +1,994 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>CVE Monitoring Dashboard with AI</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CVE Monitoring Dashboard</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --primary: #1a56db;
+            --primary:      #1a56db;
             --primary-dark: #1240a8;
-            --primary-light: #e8f0fe;
-            --danger: #e02424;
-            --warning: #e3a008;
-            --success: #057a55;
-            --info: #0694a2;
-            --dark: #111928;
-            --surface: #ffffff;
-            --surface-2: #f9fafb;
-            --surface-3: #f3f4f6;
-            --border: #e5e7eb;
-            --text: #111928;
-            --text-muted: #6b7280;
-            --mono: 'IBM Plex Mono', monospace;
-            --sans: 'IBM Plex Sans', sans-serif;
-            --new-badge: #dc2626;
+            --danger:       #e02424;
+            --success:      #057a55;
+            --dark:         #111928;
+            --border:       #e5e7eb;
+            --text:         #111928;
+            --text-muted:   #6b7280;
+            --surface-2:    #f9fafb;
+            --surface-3:    #f3f4f6;
+            --mono:         'IBM Plex Mono', monospace;
+            --sans:         'IBM Plex Sans', sans-serif;
+            --automotive:   #7c3aed;
+            --it:           #0284c7;
+            --iot:          #059669;
+            --industrial:   #d97706;
+            --telecom:      #db2777;
+            --medical:      #dc2626;
         }
-
-        * { box-sizing: border-box; }
-
+        *, *::before, *::after { box-sizing: border-box; }
         body {
             background: #f1f5f9;
             font-family: var(--sans);
             color: var(--text);
             font-size: 14px;
+            margin: 0;
         }
 
+        /* ── STICKY HEADER ── */
         .app-header {
             background: var(--dark);
             color: white;
-            padding: 16px 24px;
+            padding: 10px 20px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             border-bottom: 3px solid var(--primary);
             position: sticky;
             top: 0;
-            z-index: 100;
+            z-index: 200;
+            gap: 8px;
+            flex-wrap: wrap;
         }
-        .app-header .brand {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-weight: 700;
-            font-size: 1.15rem;
-            letter-spacing: -0.3px;
+        .brand {
+            display: flex; align-items: center; gap: 10px;
+            font-weight: 700; font-size: 1rem;
+            text-decoration: none; color: white;
         }
-        .app-header .brand i { color: #60a5fa; font-size: 1.4rem; }
+        .brand img { height: 30px; }
+        .header-right { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 
-        .app-body { padding: 20px 24px; max-width: 100%; }
-
-        /* Alert Banner */
-        .alert-banner {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        /* ── TOP UPDATE BANNER ── */
+        .update-banner {
+            background: linear-gradient(90deg, #5b21b6 0%, #7c3aed 40%, #4f46e5 100%);
             color: white;
-            padding: 12px 24px;
-            border-radius: 8px;
-            margin-bottom: 20px;
+            padding: 8px 20px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-        }
-        .alert-banner a {
-            color: white;
-            text-decoration: underline;
-            font-weight: 600;
-        }
-
-        /* Stat Cards */
-        .stat-strip {
-            display: flex;
+            font-size: .82rem;
+            font-weight: 500;
             gap: 12px;
-            flex-wrap: wrap;
-            margin-bottom: 18px;
+        }
+        .update-banner .left { display: flex; align-items: center; gap: 8px; }
+        .update-banner .refresh-btn {
+            display: inline-flex; align-items: center; gap: 5px;
+            color: rgba(255,255,255,.85);
+            font-size: .78rem; font-weight: 600;
+            cursor: pointer; text-decoration: none;
+            padding: 3px 10px; border-radius: 6px;
+            border: 1px solid rgba(255,255,255,.3);
+            background: rgba(255,255,255,.1);
+            transition: background .15s;
+        }
+        .update-banner .refresh-btn:hover {
+            background: rgba(255,255,255,.2);
+            color: white;
+        }
+        .update-banner .refresh-btn.spinning i {
+            animation: spin .8s linear infinite;
+        }
+        @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+
+        /* ── MAIN BODY ── */
+        .app-body { padding: 14px 20px; }
+
+        /* ── STAT STRIP ── */
+        .stat-strip {
+            display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
         }
         .stat-card {
-            background: white;
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 12px 18px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            min-width: 160px;
-            flex: 1;
+            background: white; border: 1px solid var(--border);
+            border-radius: 10px; padding: 10px 16px;
+            display: flex; align-items: center; gap: 10px;
+            flex: 1; min-width: 140px;
         }
         .stat-icon {
-            width: 38px; height: 38px;
-            border-radius: 8px;
+            width: 34px; height: 34px; border-radius: 8px;
             display: flex; align-items: center; justify-content: center;
-            font-size: 1.2rem;
-            flex-shrink: 0;
+            font-size: 1rem; flex-shrink: 0;
         }
-        .stat-icon.blue  { background: #dbeafe; color: var(--primary); }
-        .stat-icon.green { background: #d1fae5; color: var(--success); }
-        .stat-icon.purple { background: #ede9fe; color: #7c3aed; }
-        .stat-icon.orange { background: #fed7aa; color: #c2410c; }
-        .stat-label { font-size: 0.72rem; color: var(--text-muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
-        .stat-value { font-size: 1rem; font-weight: 700; color: var(--text); }
+        .stat-icon.blue   { background: #dbeafe; color: var(--primary); }
+        .stat-icon.green  { background: #d1fae5; color: var(--success); }
+        .stat-icon.slate  { background: #f1f5f9; color: #475569; }
+        .stat-icon.violet { background: #ede9fe; color: #6d28d9; }
+        .stat-icon.amber  { background: #fef3c7; color: #92400e; }
+        .stat-label { font-size: .68rem; color: var(--text-muted); font-weight: 600;
+                      text-transform: uppercase; letter-spacing: .5px; }
+        .stat-value { font-size: .92rem; font-weight: 700; color: var(--text); }
+        .sev-pills  { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
+        .sev-pill {
+            font-size: .68rem; font-weight: 700;
+            padding: 2px 7px; border-radius: 20px; font-family: var(--mono);
+        }
+        .sev-pill.crit { background: #fee2e2; color: #b91c1c; }
+        .sev-pill.high { background: #fef3c7; color: #92400e; }
+        .sev-pill.med  { background: #cffafe; color: #164e63; }
+        .sev-pill.low  { background: #f3f4f6; color: #374151; }
 
-        /* Recent Alerts */
-        .alerts-card {
-            background: white;
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 16px;
-            margin-bottom: 18px;
-        }
-        .alerts-title {
-            font-weight: 700;
+        /* ── RECENT ALERTS SECTION ── */
+        .alerts-section {
+            background: white; border: 1px solid var(--border);
+            border-radius: 10px; padding: 14px 18px;
             margin-bottom: 12px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
         }
-        .alert-item {
-            padding: 10px;
-            border-left: 3px solid var(--primary);
-            background: var(--surface-2);
-            margin-bottom: 8px;
-            border-radius: 0 6px 6px 0;
-            font-size: 0.85rem;
+        .alerts-section .section-title {
+            font-size: .85rem; font-weight: 700;
+            color: var(--text); display: flex; align-items: center; gap: 7px;
+            margin-bottom: 10px;
         }
-        .alert-item .time {
-            color: var(--text-muted);
-            font-size: 0.75rem;
-            font-family: var(--mono);
+        .alerts-section .section-title i { color: var(--primary); }
+        .alert-row {
+            display: flex; align-items: center; gap: 10px;
+            padding: 7px 0; border-bottom: 1px solid var(--border);
+            font-size: .78rem; flex-wrap: wrap;
+        }
+        .alert-row:last-child { border-bottom: none; padding-bottom: 0; }
+        .alert-cve-id {
+            font-family: var(--mono); font-weight: 700;
+            color: var(--primary); text-decoration: none; min-width: 120px;
+        }
+        .alert-cve-id:hover { text-decoration: underline; }
+        .alert-keyword {
+            background: #fefce8; color: #713f12;
+            border: 1px solid #fde68a; padding: 2px 7px;
+            border-radius: 8px; font-size: .72rem; font-weight: 600;
+        }
+        .alert-bom {
+            background: #eff6ff; color: #1d4ed8;
+            border: 1px solid #bfdbfe; padding: 2px 7px;
+            border-radius: 8px; font-size: .72rem; font-weight: 500;
+        }
+        .alert-email { color: var(--text-muted); font-size: .72rem; }
+        .alert-time  { color: var(--text-muted); font-size: .7rem;
+                       font-family: var(--mono); margin-left: auto; }
+        .alerts-empty {
+            text-align: center; color: var(--text-muted);
+            padding: 18px 0; font-size: .83rem;
         }
 
-        .new-badge {
-            background: var(--new-badge);
-            color: white;
-            font-size: 0.65rem;
-            font-weight: 700;
-            padding: 2px 6px;
-            border-radius: 10px;
-            margin-left: 8px;
-            display: inline-block;
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.8; }
-            100% { opacity: 1; }
-        }
-
+        /* ── SEARCH PANEL ── */
         .search-panel {
-            background: white;
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            overflow: hidden;
-            margin-bottom: 16px;
+            background: white; border: 1px solid var(--border);
+            border-radius: 12px; overflow: hidden; margin-bottom: 12px;
         }
-
-        .kw-strip {
-            background: white;
-            border: 1px solid #bfdbfe;
-            border-radius: 10px;
-            padding: 10px 16px;
-            margin-bottom: 14px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
-        }
-
-        .results-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 12px;
-            flex-wrap: wrap;
-            gap: 10px;
-        }
-
-        .table-wrap {
-            background: white;
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            overflow: hidden;
-        }
-        .table-scroll {
-            overflow-x: auto;
-            overflow-y: auto;
-            max-height: 75vh;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            table-layout: fixed;
-        }
-        thead th {
-            background: var(--dark);
-            color: white;
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            padding: 11px 10px;
-            position: sticky;
-            top: 0;
-            z-index: 10;
-            white-space: nowrap;
-            border-right: 1px solid rgba(255,255,255,0.08);
-        }
-        tbody tr:hover { background: #f8faff; }
-        td {
-            padding: 10px;
-            vertical-align: top;
-            border-right: 1px solid var(--border);
+        .nav-tabs {
             border-bottom: 1px solid var(--border);
-            font-size: 0.83rem;
+            background: var(--surface-2); padding: 0 16px;
+        }
+        .nav-tabs .nav-link {
+            color: var(--text-muted); font-weight: 500; border: none;
+            border-bottom: 3px solid transparent;
+            padding: 10px 14px; font-size: .83rem; border-radius: 0;
+        }
+        .nav-tabs .nav-link.active {
+            color: var(--primary); background: transparent;
+            border-bottom-color: var(--primary); font-weight: 600;
+        }
+        .tab-content { padding: 16px 18px; }
+        .upload-zone {
+            border: 2px dashed #93c5fd; border-radius: 10px;
+            padding: 22px; text-align: center; background: #f0f7ff;
+            cursor: pointer; transition: all .2s;
+        }
+        .upload-zone:hover { border-color: var(--primary); background: #dbeafe; }
+        .upload-zone i { font-size: 1.8rem; color: var(--primary); }
+
+        /* ── INDUSTRY BAR ── */
+        .industry-bar {
+            background: white; border: 1px solid var(--border);
+            border-radius: 10px; padding: 9px 14px;
+            margin-bottom: 10px; display: flex; align-items: center;
+            gap: 7px; flex-wrap: wrap;
+        }
+        .industry-bar .label {
+            font-size: .7rem; font-weight: 700;
+            text-transform: uppercase; letter-spacing: .5px;
+            color: var(--text-muted); white-space: nowrap;
+        }
+        .ind-btn {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 3px 11px; border-radius: 20px;
+            font-size: .75rem; font-weight: 600;
+            cursor: pointer; border: 2px solid transparent;
+            transition: all .15s; background: var(--surface-3); color: var(--text-muted);
+        }
+        .ind-btn.active { color: white; }
+        .ind-btn[data-ind="all"].active        { background: var(--dark);       border-color: var(--dark); }
+        .ind-btn[data-ind="automotive"].active { background: var(--automotive); border-color: var(--automotive); }
+        .ind-btn[data-ind="it"].active         { background: var(--it);         border-color: var(--it); }
+        .ind-btn[data-ind="iot"].active        { background: var(--iot);        border-color: var(--iot); }
+        .ind-btn[data-ind="industrial"].active { background: var(--industrial); border-color: var(--industrial); }
+        .ind-btn[data-ind="telecom"].active    { background: var(--telecom);    border-color: var(--telecom); }
+        .ind-btn[data-ind="medical"].active    { background: var(--medical);    border-color: var(--medical); }
+        .ind-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        .ind-dot.automotive { background: var(--automotive); }
+        .ind-dot.it         { background: var(--it); }
+        .ind-dot.iot        { background: var(--iot); }
+        .ind-dot.industrial { background: var(--industrial); }
+        .ind-dot.telecom    { background: var(--telecom); }
+        .ind-dot.medical    { background: var(--medical); }
+        .ind-dot.all        { background: var(--dark); }
+        .ind-count-badge {
+            background: rgba(0,0,0,.1); border-radius: 10px;
+            padding: 0 5px; font-size: .65rem; font-family: var(--mono);
         }
 
-        .col-id       { width: 110px; }
-        .col-cvss     { width: 60px; }
-        .col-sev      { width: 82px; }
-        .col-date     { width: 88px; }
-        .col-desc     { width: 210px; }
+        /* ── KEYWORD STRIP ── */
+        .kw-strip {
+            background: white; border: 1px solid #bfdbfe;
+            border-radius: 10px; padding: 7px 14px;
+            margin-bottom: 10px; display: flex; align-items: center;
+            gap: 6px; flex-wrap: wrap;
+        }
+        .kw-badge {
+            display: inline-flex; align-items: center; gap: 5px;
+            background: #eff6ff; color: var(--primary);
+            border: 1px solid #bfdbfe;
+            padding: 3px 10px; border-radius: 20px;
+            font-size: .78rem; font-weight: 600;
+        }
+        .kw-count {
+            background: rgba(203,213,225,.5); color: #64748b;
+            border-radius: 10px; padding: 1px 6px;
+            font-size: .68rem; font-weight: 700;
+            font-family: var(--mono); min-width: 18px;
+            display: inline-block; text-align: center;
+        }
+        .kw-rm { cursor: pointer; color: #93c5fd; font-size: .95rem; font-weight: 700; }
+        .kw-rm:hover { color: var(--danger); }
+
+        /* ── RESULTS HEADER ── */
+        .results-header {
+            display: flex; justify-content: space-between;
+            align-items: center; margin-bottom: 9px;
+            flex-wrap: wrap; gap: 8px;
+        }
+        .results-title {
+            font-size: .88rem; font-weight: 700;
+            display: flex; align-items: center; gap: 7px;
+        }
+        .results-count {
+            background: var(--primary); color: white;
+            font-family: var(--mono); font-size: .72rem;
+            padding: 2px 9px; border-radius: 12px;
+        }
+        .export-btn {
+            background: var(--success); color: white; border: none;
+            padding: 6px 14px; border-radius: 8px;
+            font-size: .78rem; font-weight: 600; cursor: pointer;
+            text-decoration: none;
+            display: inline-flex; align-items: center; gap: 5px;
+        }
+        .export-btn:hover { background: #046c4e; color: white; }
+
+        /* ── TABLE ── */
+        .table-wrap {
+            background: white; border: 1px solid var(--border);
+            border-radius: 12px; overflow: hidden;
+        }
+        .table-scroll { overflow-x: auto; overflow-y: auto; max-height: 68vh; }
+        table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+        thead th {
+            background: var(--dark); color: white;
+            font-size: .7rem; font-weight: 600;
+            text-transform: uppercase; letter-spacing: .5px;
+            padding: 10px 9px;
+            position: sticky; top: 0; z-index: 10;
+            white-space: nowrap;
+            border-right: 1px solid rgba(255,255,255,.07);
+        }
+        thead th:last-child { border-right: none; }
+        tbody tr { border-bottom: 1px solid var(--border); transition: background .1s; }
+        tbody tr:hover { background: #f8faff; }
+        tbody tr.hidden-row { display: none; }
+        td {
+            padding: 8px 9px; vertical-align: top;
+            border-right: 1px solid var(--border); font-size: .78rem;
+        }
+        td:last-child { border-right: none; }
+
+        .col-id     { width: 105px; }
+        .col-cvss   { width: 55px;  }
+        .col-sev    { width: 78px;  }
+        .col-date   { width: 82px;  }
+        .col-desc   { width: 195px; }
+        .col-ai     { width: 210px; }
+        .col-ver    { width: 88px;  }
+        .col-status { width: 105px; }
+        .col-rem    { width: 210px; }
+        .col-ind    { width: 115px; }
+        .col-comp   { width: 115px; }
+        .col-match  { width: 80px;  }
+
+        .cell-scroll {
+            max-height: 110px; overflow-y: auto;
+            scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent;
+        }
+        .cell-scroll::-webkit-scrollbar { width: 3px; }
+        .cell-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
+
+        .desc-box {
+            background: var(--surface-2); border-left: 3px solid #94a3b8;
+            border-radius: 0 6px 6px 0; padding: 6px 8px;
+            font-size: .76rem; line-height: 1.55; color: #374151;
+        }
+        .ai-box {
+            background: #f0f7ff; border-left: 3px solid var(--primary);
+            border-radius: 0 6px 6px 0; padding: 6px 8px;
+            font-size: .76rem; line-height: 1.6; color: #1e3a5f;
+        }
+        .rem-box {
+            background: #f0fdf4; border-left: 3px solid var(--success);
+            border-radius: 0 6px 6px 0; padding: 6px 8px;
+            font-size: .76rem; line-height: 1.6; color: #14532d;
+        }
+        .ai-box.pending, .rem-box.pending {
+            background: var(--surface-2); border-left-color: #cbd5e1;
+            color: var(--text-muted); font-style: italic;
+        }
 
         .cvss-val {
-            font-family: var(--mono);
-            font-size: 1rem;
-            font-weight: 700;
-            text-align: center;
-            display: block;
+            font-family: var(--mono); font-size: .92rem;
+            font-weight: 700; text-align: center; display: block;
         }
         .cvss-val.crit { color: var(--danger); }
         .cvss-val.high { color: #d97706; }
         .cvss-val.med  { color: #0284c7; }
         .cvss-val.low  { color: #6b7280; }
 
-        .severity-badge {
-            display: inline-block;
-            padding: 3px 9px;
-            border-radius: 12px;
-            font-size: 0.72rem;
-            font-weight: 700;
-            text-align: center;
-            width: 100%;
+        .sev-badge {
+            display: inline-block; padding: 2px 8px;
+            border-radius: 12px; font-size: .68rem;
+            font-weight: 700; text-align: center; width: 100%;
         }
-        .severity-badge.Critical { background: #fee2e2; color: #991b1b; }
-        .severity-badge.High     { background: #fef3c7; color: #92400e; }
-        .severity-badge.Medium   { background: #cffafe; color: #164e63; }
-        .severity-badge.Low      { background: #f3f4f6; color: #374151; }
+        .sev-badge.Critical { background: #fee2e2; color: #991b1b; }
+        .sev-badge.High     { background: #fef3c7; color: #92400e; }
+        .sev-badge.Medium   { background: #cffafe; color: #164e63; }
+        .sev-badge.Low      { background: #f3f4f6; color: #374151; }
+        .sev-badge.Unknown  { background: #f3f4f6; color: #9ca3af; }
 
-        .btn-primary {
-            background: var(--primary);
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-weight: 600;
-            cursor: pointer;
+        .cve-link {
+            font-family: var(--mono); font-size: .76rem; font-weight: 600;
+            color: var(--primary); text-decoration: none;
+            display: block; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap;
         }
-        .btn-outline {
-            background: white;
-            border: 1px solid var(--border);
-            padding: 8px 16px;
-            border-radius: 8px;
-            cursor: pointer;
+        .cve-link:hover { text-decoration: underline; }
+        .new-badge {
+            display: inline-block; background: #dcfce7; color: #166534;
+            border: 1px solid #86efac; font-size: .6rem; font-weight: 700;
+            padding: 1px 4px; border-radius: 5px; margin-top: 2px;
         }
+        .ver-badge {
+            display: inline-block; background: #cffafe; color: #164e63;
+            font-family: var(--mono); font-size: .68rem; font-weight: 600;
+            padding: 2px 6px; border-radius: 6px;
+            max-width: 100%; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap;
+        }
+        .fix-badge {
+            display: inline-flex; align-items: center; gap: 3px;
+            padding: 3px 8px; border-radius: 20px;
+            font-size: .68rem; font-weight: 700; white-space: nowrap;
+        }
+        .fix-badge.available  { background: #d1fae5; color: #065f46; }
+        .fix-badge.notfixed   { background: #fee2e2; color: #991b1b; }
+        .fix-badge.workaround { background: #fef3c7; color: #78350f; }
+        .fix-badge.unknown    { background: #f3f4f6; color: #6b7280; }
+        .fixed-in {
+            font-family: var(--mono); font-size: .65rem;
+            color: var(--text-muted); margin-top: 2px; display: block;
+        }
+        .ind-tag {
+            display: inline-flex; align-items: center; gap: 3px;
+            padding: 2px 7px; border-radius: 12px;
+            font-size: .67rem; font-weight: 600; margin: 2px; white-space: nowrap;
+        }
+        .ind-tag.automotive { background: #ede9fe; color: #5b21b6; }
+        .ind-tag.it         { background: #e0f2fe; color: #0369a1; }
+        .ind-tag.iot        { background: #dcfce7; color: #166534; }
+        .ind-tag.industrial { background: #fef3c7; color: #92400e; }
+        .ind-tag.telecom    { background: #fce7f3; color: #9d174d; }
+        .ind-tag.medical    { background: #fee2e2; color: #991b1b; }
+        .comp-tag {
+            display: inline-block; background: #eff6ff; color: #1d4ed8;
+            border: 1px solid #bfdbfe; padding: 2px 7px;
+            border-radius: 10px; font-size: .67rem; font-weight: 500; margin: 2px;
+        }
+        .match-tag {
+            background: #fefce8; color: #713f12;
+            border: 1px solid #fde68a; padding: 2px 6px;
+            border-radius: 7px; font-size: .67rem; font-weight: 600;
+            margin: 2px; display: inline-block;
+        }
+
+        /* ── SKELETON ── */
+        @keyframes shimmer {
+            0%   { background-position: -400px 0; }
+            100% { background-position:  400px 0; }
+        }
+        .skeleton-line {
+            display: block; height: 8px; border-radius: 4px;
+            margin-bottom: 5px; width: 100%;
+            background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+            background-size: 400px 100%; animation: shimmer 1.4s infinite;
+        }
+
+        /* ── AI PROGRESS ── */
+        .ai-progress-bar {
+            position: fixed; top: 0; left: 0; right: 0;
+            height: 3px; background: #dbeafe; z-index: 9999; display: none;
+        }
+        .ai-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6, #06b6d4);
+            transition: width .3s ease; width: 0%;
+        }
+        .ai-toast {
+            position: fixed; bottom: 16px; right: 16px;
+            background: #1e293b; color: white;
+            padding: 8px 13px; border-radius: 8px;
+            font-size: .76rem; font-family: var(--mono);
+            display: none; align-items: center; gap: 7px;
+            z-index: 9998; box-shadow: 0 4px 18px rgba(0,0,0,.3);
+        }
+        .ai-toast.show { display: flex; }
+        .ai-dot { width: 7px; height: 7px; border-radius: 50%; background: #34d399; animation: pulse 1s infinite; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+        /* ── HEADER AI CONTROLS ── */
+        .ai-toggle-group {
+            display: flex; align-items: center; gap: 7px;
+            background: rgba(255,255,255,.07);
+            border-radius: 8px; padding: 4px 11px; position: relative;
+        }
+        .ai-toggle-group label {
+            color: #e5e7eb; font-size: .8rem; font-weight: 500; cursor: pointer; margin: 0;
+        }
+        .ai-status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        .ai-status-dot.on  { background: #34d399; box-shadow: 0 0 0 3px rgba(52,211,153,.3); }
+        .ai-status-dot.off { background: #6b7280; }
+        .provider-pill {
+            background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.15);
+            border-radius: 6px; color: #e2e8f0;
+            font-size: .72rem; font-weight: 600;
+            padding: 2px 8px; cursor: pointer;
+            display: flex; align-items: center; gap: 4px;
+            transition: background .15s; white-space: nowrap;
+        }
+        .provider-pill:hover { background: rgba(255,255,255,.18); }
+        .provider-pill .pdot { width: 6px; height: 6px; border-radius: 50%; }
+
+        /* Provider panel */
+        .ai-panel {
+            display: none; position: absolute; top: calc(100% + 10px); right: 0;
+            width: 300px; background: #1e293b;
+            border: 1px solid #334155; border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,.5);
+            z-index: 9999; padding: 14px;
+        }
+        .ai-panel.open { display: block; }
+        .panel-title {
+            font-size: .68rem; font-weight: 700; color: #64748b;
+            text-transform: uppercase; letter-spacing: .5px; margin-bottom: 9px;
+        }
+        .provider-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 9px; }
+        .prov-opt {
+            border: 1.5px solid #334155; border-radius: 8px;
+            padding: 6px 8px; cursor: pointer; transition: all .15s; background: #0f172a;
+        }
+        .prov-opt:hover  { border-color: #3b82f6; background: #1e3a5f; }
+        .prov-opt.active { border-color: #3b82f6; background: #1e3a5f; }
+        .prov-opt .pname { font-size: .74rem; font-weight: 700; color: #e2e8f0; }
+        .prov-opt .ptag  { font-size: .6rem; font-weight: 600; }
+        .ptag.free { color: #34d399; } .ptag.paid { color: #fbbf24; }
+        .key-row { display: flex; gap: 5px; margin-bottom: 7px; }
+        .key-row input {
+            flex: 1; background: #0f172a; border: 1px solid #334155;
+            border-radius: 7px; color: #e2e8f0; font-size: .74rem;
+            padding: 5px 8px; outline: none; transition: border-color .15s;
+        }
+        .key-row input:focus { border-color: #3b82f6; }
+        .key-row input::placeholder { color: #475569; font-size: .68rem; }
+        .eye-btn {
+            background: #0f172a; border: 1px solid #334155;
+            border-radius: 7px; color: #64748b; padding: 0 7px; cursor: pointer;
+        }
+        .model-sel {
+            width: 100%; background: #0f172a; border: 1px solid #334155;
+            border-radius: 7px; color: #e2e8f0; font-size: .74rem;
+            padding: 5px 8px; outline: none; margin-bottom: 8px;
+        }
+        .apply-btn {
+            width: 100%; background: #3b82f6; color: white; border: none;
+            border-radius: 7px; padding: 6px; font-size: .76rem; font-weight: 700;
+            cursor: pointer; transition: background .15s;
+        }
+        .apply-btn:hover    { background: #2563eb; }
+        .apply-btn:disabled { background: #334155; cursor: not-allowed; }
+        .test-result { margin-top: 6px; font-size: .68rem; text-align: center; min-height: 14px; }
+        .test-result.ok  { color: #34d399; }
+        .test-result.err { color: #f87171; }
+        .panel-note {
+            margin-top: 8px; padding-top: 7px;
+            border-top: 1px solid #334155;
+            font-size: .64rem; color: #475569; text-align: center;
+        }
+
+        /* ── HEADER BUTTONS ── */
+        .hdr-btn {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 4px 10px; border-radius: 7px;
+            font-size: .72rem; font-weight: 600;
+            text-decoration: none; cursor: pointer; border: none;
+            transition: opacity .15s; white-space: nowrap;
+        }
+        .hdr-btn:hover { opacity: .82; }
+        .hdr-btn-green { background: #16a34a; color: white; }
+        .hdr-btn-ghost {
+            background: rgba(255,255,255,.1); color: #94a3b8;
+            border: 1px solid rgba(255,255,255,.12);
+        }
+        .hdr-btn-ghost:hover { color: white; background: rgba(255,255,255,.18); }
+
+        /* ── SPINNER ── */
+        .spinner-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(17,25,40,.6); z-index: 9999;
+            align-items: center; justify-content: center;
+        }
+        .spinner-overlay.show { display: flex; }
+        .spinner-box {
+            background: white; border-radius: 14px;
+            padding: 26px 34px; text-align: center;
+            box-shadow: 0 20px 60px rgba(0,0,0,.3);
+        }
+        .spinner-box p { color: var(--text-muted); margin: 0; font-size: .8rem; }
+
+        /* ── EMPTY STATE ── */
+        .empty-state {
+            text-align: center; padding: 50px 20px; color: var(--text-muted);
+        }
+        .empty-state i { font-size: 2.6rem; color: #d1d5db; }
+
+        /* ── PAGINATION ── */
+        .pagination .page-link { color: var(--primary); border-color: var(--border); font-size: .78rem; }
+        .pagination .page-item.active .page-link { background: var(--primary); border-color: var(--primary); }
+
+        @media(max-width:768px) { .app-body { padding: 10px; } }
     </style>
 </head>
 <body>
 
-<div class="app-header">
-    <div class="brand">
-        <i class="bi bi-shield-shaded"></i>
-        CVE Monitoring Dashboard
-    </div>
-    <div>
-        <a href="/upload-bom" class="btn btn-outline" style="color: white; border-color: white;">
-            <i class="bi bi-upload"></i> Upload BOM
+<!-- AI progress bar -->
+<div class="ai-progress-bar" id="aiProgressBar">
+    <div class="ai-progress-fill" id="aiProgressFill"></div>
+</div>
+
+<!-- AI toast -->
+<div class="ai-toast" id="aiToast">
+    <span class="ai-dot"></span>
+    <span id="aiToastText">Fetching AI analysis…</span>
+</div>
+
+<!-- ═══════════ STICKY HEADER ═══════════ -->
+<header class="app-header">
+    <a href="/" class="brand">
+        <img src="{{ url_for('static', filename='tata-logo.png') }}" alt="Logo">
+        <span>TMPVL CVE Monitoring</span>
+    </a>
+    <div class="header-right">
+        <!-- AI toggle -->
+        <div class="ai-toggle-group">
+            <span class="ai-status-dot {% if use_ai %}on{% else %}off{% endif %}"></span>
+            <input class="form-check-input m-0" type="checkbox" id="aiToggle"
+                   {% if use_ai %}checked{% endif %} onchange="toggleAI()">
+            <label for="aiToggle"><i class="bi bi-robot me-1"></i>AI</label>
+            <span style="font-size:.7rem;color:{% if use_ai %}#34d399{% else %}#9ca3af{% endif %};font-weight:700;">
+                {{ 'ON' if use_ai else 'OFF' }}
+            </span>
+            <button class="provider-pill" id="providerBtn" onclick="togglePanel(event)" type="button">
+                <span class="pdot" id="providerDot" style="background:#34d399"></span>
+                <span id="providerLabel">DeepSeek</span>
+                <i class="bi bi-chevron-down" style="font-size:.55rem;opacity:.7"></i>
+            </button>
+
+            <!-- Provider panel -->
+            <div class="ai-panel" id="aiPanel">
+                <div class="panel-title"><i class="bi bi-cpu me-1"></i>AI Provider &amp; Key</div>
+                <div class="provider-grid">
+                    <div class="prov-opt active" data-provider="deepseek"
+                         data-models='["deepseek-chat","deepseek-reasoner"]'
+                         data-placeholder="sk-..." onclick="selectProvider(this)">
+                        <div class="pname">DeepSeek</div><div class="ptag free">Free tier</div>
+                    </div>
+                    <div class="prov-opt" data-provider="openai"
+                         data-models='["gpt-4o-mini","gpt-4o","gpt-3.5-turbo"]'
+                         data-placeholder="sk-proj-..." onclick="selectProvider(this)">
+                        <div class="pname">OpenAI</div><div class="ptag paid">Paid</div>
+                    </div>
+                    <div class="prov-opt" data-provider="claude"
+                         data-models='["claude-3-haiku-20240307","claude-3-5-sonnet-20241022"]'
+                         data-placeholder="sk-ant-..." onclick="selectProvider(this)">
+                        <div class="pname">Claude</div><div class="ptag paid">Paid</div>
+                    </div>
+                    <div class="prov-opt" data-provider="ollama"
+                         data-models='["llama3.2","llama3.1","mistral","phi3"]'
+                         data-placeholder="No key needed" onclick="selectProvider(this)">
+                        <div class="pname">Ollama</div><div class="ptag free">Local/Free</div>
+                    </div>
+                </div>
+                <div class="key-row" id="keyRow">
+                    <input type="password" id="apiKeyInput" placeholder="Paste API key here"
+                           oninput="clearTest()">
+                    <button class="eye-btn" onclick="toggleEye()" type="button">
+                        <i class="bi bi-eye" id="eyeIcon"></i>
+                    </button>
+                </div>
+                <select class="model-sel" id="modelSel"></select>
+                <button class="apply-btn" id="applyBtn" onclick="applySettings()" type="button">
+                    <span id="applyText"><i class="bi bi-check-lg me-1"></i>Apply &amp; Test</span>
+                </button>
+                <div class="test-result" id="testResult"></div>
+                <div class="panel-note">
+                    <i class="bi bi-shield-lock me-1"></i>Key in session only — never saved to server
+                </div>
+            </div>
+        </div>
+
+        <!-- Manual update -->
+        <button class="hdr-btn hdr-btn-green" id="updateBtn" onclick="triggerUpdate()" type="button"
+                title="Trigger manual CVE update now">
+            <i class="bi bi-cloud-arrow-down" id="updateIcon"></i>Update DB
+        </button>
+
+        <!-- Status check -->
+        <a href="/api/nvd-status" target="_blank" class="hdr-btn hdr-btn-ghost" title="System status">
+            <i class="bi bi-activity"></i>Status
+        </a>
+
+        <!-- Admin -->
+        <a href="/admin" class="hdr-btn hdr-btn-ghost" title="Admin panel">
+            <i class="bi bi-shield-lock-fill"></i>
         </a>
     </div>
+</header>
+
+<!-- ═══════════ UPDATE BANNER ═══════════ -->
+<div class="update-banner">
+    <div class="left">
+        <i class="bi bi-clock"></i>
+        <span id="bannerText">Daily updates run at 2:00 AM UTC. Last update: checking…</span>
+    </div>
+    <a href="#" class="refresh-btn" id="bannerRefreshBtn" onclick="triggerUpdate(); return false;">
+        <i class="bi bi-arrow-clockwise" id="bannerRefreshIcon"></i>Refresh
+    </a>
 </div>
 
 <div class="app-body">
 
-    <!-- Alert Banner -->
-    <div class="alert-banner">
-        <span>
-            <i class="bi bi-megaphone"></i>
-            Daily updates run at 2:00 AM UTC. Last update: {{ last_update|default('Today') }}
-        </span>
-        <a href="/upload-bom"><i class="bi bi-bell"></i> Subscribe for alerts</a>
-    </div>
-
-    <!-- Stats Cards -->
+    <!-- ═══════════ STAT STRIP ═══════════ -->
     <div class="stat-strip">
         <div class="stat-card">
-            <div class="stat-icon blue"><i class="bi bi-database"></i></div>
+            <div class="stat-icon blue"><i class="bi bi-calendar-range"></i></div>
             <div>
-                <div class="stat-label">Total CVEs</div>
-                <div class="stat-value" id="totalCves">{{ cves|length if cves else '—' }}</div>
+                <div class="stat-label">Data Coverage</div>
+                <div class="stat-value" id="dateRange" style="font-size:.76rem;">Loading…</div>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon green"><i class="bi bi-calendar-check"></i></div>
+        <div class="stat-card" id="totalCard">
+            <div class="stat-icon green"><i class="bi bi-database"></i></div>
             <div>
-                <div class="stat-label">New (24h)</div>
-                <div class="stat-value" id="newCount">—</div>
-            </div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon orange"><i class="bi bi-exclamation-triangle"></i></div>
-            <div>
-                <div class="stat-label">Critical</div>
-                <div class="stat-value" id="criticalCount">—</div>
-            </div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon purple"><i class="bi bi-bell"></i></div>
-            <div>
-                <div class="stat-label">Active BOMs</div>
-                <div class="stat-value" id="bomCount">—</div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Recent Alerts -->
-    <div class="alerts-card">
-        <div class="alerts-title">
-            <i class="bi bi-bell-fill text-primary"></i>
-            Recent Alerts (Last 24h)
-        </div>
-        <div id="recentAlerts">
-            <div class="text-muted text-center py-3">Loading alerts...</div>
-        </div>
-    </div>
-
-    <!-- Search Panel -->
-    <div class="search-panel mb-3">
-        <div class="p-3">
-            <form method="post" action="/search">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <div class="row g-3">
-                    <div class="col-md-6">
-                        <input type="text" name="keyword" class="form-control" 
-                               placeholder="Search CVE keywords..." value="{{ keyword }}">
-                    </div>
-                    <div class="col-md-4">
-                        <select name="severity" class="form-select">
-                            <option value="">All Severities</option>
-                            <option value="Critical">Critical</option>
-                            <option value="High">High</option>
-                            <option value="Medium">Medium</option>
-                            <option value="Low">Low</option>
-                        </select>
-                    </div>
-                    <div class="col-md-2">
-                        <button type="submit" class="btn btn-primary w-100">
-                            <i class="bi bi-search"></i> Search
-                        </button>
-                    </div>
+                <div class="stat-label" id="totalLabel">Total CVEs</div>
+                <div style="display:flex;align-items:baseline;gap:6px;">
+                    <div class="stat-value" id="totalCves">—</div>
+                    <span id="statsCtx" style="display:none;font-size:.68rem;font-weight:600;
+                          background:#eff6ff;color:#1d4ed8;border-radius:10px;
+                          padding:1px 6px;font-family:var(--mono);white-space:nowrap;"></span>
                 </div>
-            </form>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon slate"><i class="bi bi-pie-chart"></i></div>
+            <div>
+                <div class="stat-label" id="sevLabel">Severity</div>
+                <div class="sev-pills">
+                    <span class="sev-pill crit" id="cntCrit" title="Critical">0</span>
+                    <span class="sev-pill high" id="cntHigh" title="High">0</span>
+                    <span class="sev-pill med"  id="cntMed"  title="Medium">0</span>
+                    <span class="sev-pill low"  id="cntLow"  title="Low">0</span>
+                </div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon amber"><i class="bi bi-calendar-check"></i></div>
+            <div>
+                <div class="stat-label">New (7 Days)</div>
+                <div class="stat-value" id="new7Days">—</div>
+            </div>
+        </div>
+        {% if use_ai %}
+        <div class="stat-card">
+            <div class="stat-icon violet"><i class="bi bi-robot"></i></div>
+            <div>
+                <div class="stat-label">AI Analysed</div>
+                <div class="stat-value" id="aiCount">—</div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- ═══════════ RECENT ALERTS (last 24h) ═══════════ -->
+    <div class="alerts-section">
+        <div class="section-title">
+            <i class="bi bi-bell-fill"></i>
+            Recent Alerts (Last 24h)
+            <span id="alertsBadge" style="display:none;background:#fee2e2;color:#991b1b;
+                  font-family:var(--mono);font-size:.68rem;font-weight:700;
+                  padding:1px 7px;border-radius:10px;"></span>
+        </div>
+        <div id="alertsBody">
+            <div class="alerts-empty">
+                <i class="bi bi-hourglass-split me-2"></i>Loading alerts…
+            </div>
         </div>
     </div>
 
-    <!-- Active Keywords -->
-    {% if active_keywords %}
+    <!-- ═══════════ SEARCH PANEL ═══════════ -->
+    <div class="search-panel">
+        <ul class="nav nav-tabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link {% if request.args.get('tab') not in ['bom','multi'] %}active{% endif %}"
+                        id="tab-single" data-bs-toggle="tab" data-bs-target="#pane-single"
+                        type="button" role="tab">
+                    <i class="bi bi-search me-1"></i>Single Keyword
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link {% if request.args.get('tab')=='bom' %}active{% endif %}"
+                        id="tab-bom" data-bs-toggle="tab" data-bs-target="#pane-bom"
+                        type="button" role="tab">
+                    <i class="bi bi-file-earmark-arrow-up me-1"></i>BOM File Upload
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link {% if request.args.get('tab')=='multi' %}active{% endif %}"
+                        id="tab-multi" data-bs-toggle="tab" data-bs-target="#pane-multi"
+                        type="button" role="tab">
+                    <i class="bi bi-list-check me-1"></i>Multiple Keywords
+                </button>
+            </li>
+        </ul>
+        <div class="tab-content">
+
+            <!-- Single Keyword -->
+            <div class="tab-pane fade {% if request.args.get('tab') not in ['bom','multi'] %}show active{% endif %}"
+                 id="pane-single" role="tabpanel">
+                <form method="post" action="/search" id="singleForm">
+                    <input type="hidden" name="tab"        value="single">
+                    <input type="hidden" name="use_ai"     value="{{ 'true' if use_ai else 'false' }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="row g-3 align-items-end">
+                        <div class="col-md-5">
+                            <label class="form-label fw-semibold" style="font-size:.8rem;">Search Keyword</label>
+                            <input type="text" name="keyword" value="{{ keyword }}"
+                                   class="form-control"
+                                   placeholder="e.g. bluetooth, nvidia, windows…">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold" style="font-size:.8rem;">Severity Filter</label>
+                            <select name="severity" class="form-select">
+                                <option value="">All Severities</option>
+                                <option value="Critical" {% if severity_filter=='Critical' %}selected{% endif %}>Critical (9.0–10.0)</option>
+                                <option value="High"     {% if severity_filter=='High'     %}selected{% endif %}>High (7.0–8.9)</option>
+                                <option value="Medium"   {% if severity_filter=='Medium'   %}selected{% endif %}>Medium (4.0–6.9)</option>
+                                <option value="Low"      {% if severity_filter=='Low'      %}selected{% endif %}>Low (0–3.9)</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <button type="submit" class="btn btn-primary w-100">
+                                <i class="bi bi-search me-1"></i>Search CVEs
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <!-- BOM Upload -->
+            <div class="tab-pane fade {% if request.args.get('tab')=='bom' %}show active{% endif %}"
+                 id="pane-bom" role="tabpanel">
+                <form method="post" enctype="multipart/form-data" action="/upload-bom" id="bomForm">
+                    <input type="hidden" name="use_ai_bom"  value="{{ 'true' if use_ai else 'false' }}">
+                    <input type="hidden" name="csrf_token"  value="{{ csrf_token }}">
+                    <div class="row g-3">
+                        <div class="col-md-7">
+                            <div class="upload-zone" id="uploadZone"
+                                 onclick="document.getElementById('bomFile').click()">
+                                <i class="bi bi-cloud-upload d-block mb-2"></i>
+                                <input type="file" id="bomFile" name="bom_file"
+                                       accept=".txt,.csv,.json,.xml,.xlsx,.xls"
+                                       style="display:none;">
+                                <strong id="uploadLabel">Click or drag &amp; drop BOM file</strong>
+                                <p class="text-muted mb-0 mt-1" style="font-size:.76rem;">
+                                    TXT · CSV · JSON · XML · Excel (.xlsx/.xls)
+                                </p>
+                            </div>
+                        </div>
+                        <div class="col-md-5 d-flex flex-column gap-3">
+                            <div>
+                                <label class="form-label fw-semibold" style="font-size:.8rem;">Severity Filter</label>
+                                <select name="severity_bom" class="form-select">
+                                    <option value="">All Severities</option>
+                                    <option value="Critical">Critical</option>
+                                    <option value="High">High</option>
+                                    <option value="Medium">Medium</option>
+                                    <option value="Low">Low</option>
+                                </select>
+                            </div>
+                            {% if env_boms %}
+                            <div style="background:#f0f7ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;">
+                                <div style="font-size:.7rem;font-weight:700;color:#1d4ed8;margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px;">
+                                    <i class="bi bi-bell-fill me-1"></i>Auto-Alert BOMs Active
+                                </div>
+                                {% for bom in env_boms %}
+                                <div style="font-size:.74rem;color:#374151;margin-bottom:3px;">
+                                    <strong>{{ bom.name }}</strong>
+                                    <span style="color:#6b7280;"> → {{ bom.email }}</span>
+                                    <span style="color:#9ca3af;"> ({{ bom.keywords|length }} kw)</span>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Multi Keywords -->
+            <div class="tab-pane fade {% if request.args.get('tab')=='multi' %}show active{% endif %}"
+                 id="pane-multi" role="tabpanel">
+                <form method="post" action="/search" id="multiForm">
+                    <input type="hidden" name="use_ai"     value="{{ 'true' if use_ai else 'false' }}">
+                    <input type="hidden" name="tab"        value="multi">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="row g-3">
+                        <div class="col-md-7">
+                            <label class="form-label fw-semibold" style="font-size:.8rem;">
+                                Keywords <span style="color:var(--text-muted);font-weight:400;">(one per line)</span>
+                            </label>
+                            <textarea name="keywords" class="form-control" rows="5"
+                                      placeholder="bluetooth&#10;nvidia&#10;windows 11&#10;tenda&#10;cisco"></textarea>
+                        </div>
+                        <div class="col-md-5 d-flex flex-column gap-3">
+                            <div>
+                                <label class="form-label fw-semibold" style="font-size:.8rem;">Severity Filter</label>
+                                <select name="severity" class="form-select">
+                                    <option value="">All Severities</option>
+                                    <option value="Critical">Critical</option>
+                                    <option value="High">High</option>
+                                    <option value="Medium">Medium</option>
+                                    <option value="Low">Low</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-primary" onclick="showLoading()">
+                                <i class="bi bi-search-heart me-1"></i>Search All Keywords
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════ ACTIVE KEYWORDS ═══════════ -->
+    {% if active_keywords and active_keywords|length > 0 %}
     <div class="kw-strip">
-        <i class="bi bi-tags text-primary"></i>
-        <span style="font-weight:700;">Active:</span>
+        <i class="bi bi-tags text-primary" style="font-size:.85rem;"></i>
+        <span style="font-size:.7rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;">Active:</span>
         {% for kw in active_keywords %}
-        <span class="badge bg-primary me-1">{{ kw }}</span>
+        <span class="kw-badge">
+            {{ kw }}
+            <span class="kw-count" id="kwcount-{{ loop.index }}">…</span>
+            <span class="kw-rm" onclick="removeKeyword('{{ kw }}')" title="Remove">×</span>
+        </span>
         {% endfor %}
-        <a href="/" class="btn btn-sm btn-outline-danger ms-auto">Clear</a>
+        <a href="/" class="btn btn-sm btn-outline-danger ms-auto" style="font-size:.72rem;padding:2px 9px;">
+            <i class="bi bi-x-circle me-1"></i>Clear All
+        </a>
     </div>
     {% endif %}
 
-    <!-- Results Header -->
+    <!-- ═══════════ INDUSTRY FILTER ═══════════ -->
+    {% if cves and cves|length > 0 %}
+    <div class="industry-bar">
+        <span class="label"><i class="bi bi-buildings me-1"></i>Industry:</span>
+        <button class="ind-btn active" data-ind="all" onclick="filterInd('all',this)">
+            <span class="ind-dot all"></span>All
+            <span class="ind-count-badge" id="cnt-all">{{ cves|length }}</span>
+        </button>
+        <button class="ind-btn" data-ind="automotive" onclick="filterInd('automotive',this)">
+            <span class="ind-dot automotive"></span>🚗 Automotive
+            <span class="ind-count-badge" id="cnt-automotive">0</span>
+        </button>
+        <button class="ind-btn" data-ind="it" onclick="filterInd('it',this)">
+            <span class="ind-dot it"></span>💻 IT/SW
+            <span class="ind-count-badge" id="cnt-it">0</span>
+        </button>
+        <button class="ind-btn" data-ind="iot" onclick="filterInd('iot',this)">
+            <span class="ind-dot iot"></span>📡 IoT
+            <span class="ind-count-badge" id="cnt-iot">0</span>
+        </button>
+        <button class="ind-btn" data-ind="industrial" onclick="filterInd('industrial',this)">
+            <span class="ind-dot industrial"></span>🏭 Industrial
+            <span class="ind-count-badge" id="cnt-industrial">0</span>
+        </button>
+        <button class="ind-btn" data-ind="telecom" onclick="filterInd('telecom',this)">
+            <span class="ind-dot telecom"></span>📱 Telecom
+            <span class="ind-count-badge" id="cnt-telecom">0</span>
+        </button>
+        <button class="ind-btn" data-ind="medical" onclick="filterInd('medical',this)">
+            <span class="ind-dot medical"></span>🏥 Medical
+            <span class="ind-count-badge" id="cnt-medical">0</span>
+        </button>
+        <span id="indNote" class="ms-auto" style="font-size:.7rem;color:var(--text-muted);display:none;"></span>
+    </div>
+    {% endif %}
+
+    <!-- ═══════════ RESULTS HEADER ═══════════ -->
     <div class="results-header">
         <div>
-            <h5 class="mb-0">
+            <div class="results-title">
                 <i class="bi bi-list-ul"></i>
-                Latest CVEs
-                <span class="badge bg-secondary ms-2">{{ cves|length }}</span>
-            </h5>
+                Results
+                <span class="results-count" id="visibleCount">{{ cves|length }}</span>
+                <span style="font-size:.72rem;color:var(--text-muted);font-weight:400;">CVEs</span>
+            </div>
+            {% if use_ai %}
+            <div style="font-size:.72rem;color:var(--success);display:flex;align-items:center;gap:4px;margin-top:2px;">
+                <i class="bi bi-robot"></i>AI summaries, version tracking &amp; remediation active
+            </div>
+            {% else %}
+            <div style="font-size:.72rem;color:var(--text-muted);margin-top:2px;">
+                <i class="bi bi-info-circle me-1"></i>Enable AI for detailed summaries &amp; remediation
+            </div>
+            {% endif %}
         </div>
-        {% if active_keywords %}
-        <a href="/export?keywords={{ active_keywords|join(',') }}" class="btn btn-success">
-            <i class="bi bi-download"></i> Export CSV
+        {% if active_keywords and active_keywords|length > 0 %}
+        <a href="/export?keywords={{ active_keywords|join(',') }}&severity={{ severity_filter }}"
+           class="export-btn">
+            <i class="bi bi-download"></i>Export CSV
         </a>
         {% endif %}
     </div>
 
-    <!-- CVEs Table -->
+    <!-- ═══════════ TABLE ═══════════ -->
+    {% if cves and cves|length > 0 %}
     <div class="table-wrap">
         <div class="table-scroll">
-            <table>
+            <table id="cveTable">
                 <thead>
                     <tr>
                         <th class="col-id">CVE ID</th>
@@ -409,51 +996,162 @@
                         <th class="col-sev">Severity</th>
                         <th class="col-date">Published</th>
                         <th class="col-desc">Description</th>
+                        {% if use_ai %}<th class="col-ai">AI Summary</th>{% endif %}
+                        <th class="col-ver">Affected Ver.</th>
+                        <th class="col-status">Fix Status</th>
+                        <th class="col-rem">Remediation</th>
+                        <th class="col-ind">Industry</th>
+                        <th class="col-comp">Companies</th>
+                        <th class="col-match">Matched</th>
                     </tr>
                 </thead>
-                <tbody>
-                    {% for cve in cves %}
-                    <tr>
-                        <td>
-                            <a href="https://nvd.nist.gov/vuln/detail/{{ cve.cve_id }}" target="_blank">
-                                {{ cve.cve_id }}
-                            </a>
-                            {% if cve.is_new %}
-                            <span class="new-badge">NEW</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            <span class="cvss-val 
-                                {% if cve.cvss_score and cve.cvss_score|float >= 9 %}crit
-                                {% elif cve.cvss_score and cve.cvss_score|float >= 7 %}high
-                                {% elif cve.cvss_score and cve.cvss_score|float >= 4 %}med
-                                {% else %}low{% endif %}">
-                                {{ "%.1f"|format(cve.cvss_score|float) if cve.cvss_score else 'N/A' }}
-                            </span>
-                        </td>
-                        <td>
-                            <span class="severity-badge {{ cve.severity }}">
-                                {{ cve.severity }}
-                            </span>
-                        </td>
-                        <td style="font-family: monospace;">
-                            {{ cve.published_date[:10] if cve.published_date else 'N/A' }}
-                        </td>
-                        <td>
-                            <div style="max-height: 100px; overflow-y: auto;">
-                                {{ cve.description[:200] + '...' if cve.description else 'No description' }}
+                <tbody id="cveTableBody">
+                {% for cve in cves %}
+                {%- set dl = (cve.description or '')|lower -%}
+                {%- set cl = (cve.affected_companies or [])|join(' ')|lower -%}
+                {%- set cb = dl + ' ' + cl -%}
+                {%- set is_auto = ('automotive' in cb or 'vehicle' in cb or 'infotainment' in cb or 'ecu' in cb or 'can bus' in cb or 'tesla' in cb or 'nissan' in cb or 'ford' in cb or 'toyota' in cb or 'honda' in cb or 'harman' in cb or 'bosch' in cb or 'alps alpine' in cb) -%}
+                {%- set is_it   = ('microsoft' in cb or 'windows' in cb or 'linux' in cb or 'apple' in cb or 'google' in cb or 'android' in cb or 'apache' in cb or 'nginx' in cb or 'adobe' in cb or 'oracle' in cb or 'java' in cb or 'python' in cb or 'wordpress' in cb or 'php' in cb or 'sql' in cb or 'kubernetes' in cb or 'docker' in cb or 'vmware' in cb or 'ubuntu' in cb) -%}
+                {%- set is_iot  = ('iot' in cb or 'router' in cb or 'firmware' in cb or 'tenda' in cb or 'tp-link' in cb or 'd-link' in cb or 'netgear' in cb or 'asus' in cb or 'smart home' in cb or 'zigbee' in cb or 'bluetooth' in cb or 'wifi' in cb or 'wi-fi' in cb or 'embedded' in cb or 'camera' in cb or 'nvr' in cb) -%}
+                {%- set is_ind  = ('scada' in cb or 'plc' in cb or 'ics' in cb or 'industrial' in cb or 'siemens' in cb or 'schneider' in cb or 'rockwell' in cb or 'honeywell' in cb or 'modbus' in cb or 'hmi' in cb) -%}
+                {%- set is_tel  = ('telecom' in cb or '5g' in cb or '4g' in cb or 'lte' in cb or 'qualcomm' in cb or 'mediatek' in cb or 'baseband' in cb or 'voip' in cb or 'cisco' in cb or 'juniper' in cb) -%}
+                {%- set is_med  = ('medical' in cb or 'hospital' in cb or 'patient' in cb or 'healthcare' in cb or 'hl7' in cb or 'dicom' in cb or 'pacemaker' in cb) -%}
+                {%- set inds = [] -%}
+                {%- if is_auto -%}{%- set _ = inds.append('automotive') -%}{%- endif -%}
+                {%- if is_it   -%}{%- set _ = inds.append('it')         -%}{%- endif -%}
+                {%- if is_iot  -%}{%- set _ = inds.append('iot')        -%}{%- endif -%}
+                {%- if is_ind  -%}{%- set _ = inds.append('industrial') -%}{%- endif -%}
+                {%- if is_tel  -%}{%- set _ = inds.append('telecom')    -%}{%- endif -%}
+                {%- if is_med  -%}{%- set _ = inds.append('medical')    -%}{%- endif -%}
+
+                <tr data-industries="{{ inds|join(',') if inds else 'unknown' }}"
+                    data-cve-id="{{ cve.cve_id }}">
+                    <!-- CVE ID -->
+                    <td class="col-id">
+                        <a href="https://nvd.nist.gov/vuln/detail/{{ cve.cve_id }}"
+                           target="_blank" class="cve-link">{{ cve.cve_id }}</a>
+                        {% if cve.get('is_new') %}<span class="new-badge">NEW</span>{% endif %}
+                        {% if inds %}
+                        <div style="margin-top:2px;">
+                            {% for ind in inds[:2] %}
+                            <span class="ind-tag {{ ind }}" style="font-size:.6rem;padding:1px 5px;">{{ ind }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </td>
+                    <!-- CVSS -->
+                    <td class="col-cvss" style="text-align:center;">
+                        {% if cve.cvss_score %}
+                        <span class="cvss-val {%- if cve.cvss_score|float>=9 %} crit{%- elif cve.cvss_score|float>=7 %} high{%- elif cve.cvss_score|float>=4 %} med{%- else %} low{%- endif %}">
+                            {{ "%.1f"|format(cve.cvss_score|float) }}
+                        </span>
+                        {% else %}<span style="color:#9ca3af;">N/A</span>{% endif %}
+                    </td>
+                    <!-- Severity -->
+                    <td class="col-sev">
+                        <span class="sev-badge {{ cve.severity or 'Unknown' }}">{{ cve.severity or 'Unknown' }}</span>
+                    </td>
+                    <!-- Date -->
+                    <td class="col-date" style="color:var(--text-muted);font-family:var(--mono);font-size:.7rem;">
+                        {{ cve.published_date[:10] if cve.published_date else 'N/A' }}
+                    </td>
+                    <!-- Description -->
+                    <td class="col-desc">
+                        <div class="cell-scroll">
+                            <div class="desc-box">{{ cve.description or 'No description available' }}</div>
+                        </div>
+                    </td>
+                    {% if use_ai %}
+                    <!-- AI Summary (lazy) -->
+                    <td class="col-ai" id="ai-sum-{{ cve.cve_id|replace('-','_') }}">
+                        <div class="cell-scroll">
+                            {%- set bad = ['information not available','no ai summary available','ai analysis unavailable',''] -%}
+                            {% if cve.ai_summary and cve.ai_summary|lower not in bad %}
+                            <div class="ai-box"><i class="bi bi-robot text-primary me-1" style="font-size:.68rem;"></i>{{ cve.ai_summary }}</div>
+                            {% else %}
+                            <div class="ai-box pending ai-pending">
+                                <span class="skeleton-line"></span>
+                                <span class="skeleton-line" style="width:65%"></span>
                             </div>
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="5" class="text-center py-5">
-                            <i class="bi bi-inbox fs-1 d-block mb-3 text-muted"></i>
-                            <h5 class="text-muted">No CVEs Found</h5>
-                            <p class="text-muted">Try different keywords or upload a BOM file</p>
-                        </td>
-                    </tr>
-                    {% endfor %}
+                            {% endif %}
+                        </div>
+                    </td>
+                    {% endif %}
+                    <!-- Affected Version (lazy) -->
+                    <td class="col-ver" style="text-align:center;" id="ai-ver-{{ cve.cve_id|replace('-','_') }}">
+                        {% if cve.affected_version and cve.affected_version not in ['Unknown','','None'] %}
+                        <span class="ver-badge">{{ cve.affected_version }}</span>
+                        {% else %}
+                        <span class="text-muted ai-pending" style="font-size:.7rem;">—</span>
+                        {% endif %}
+                    </td>
+                    <!-- Fix Status (lazy) -->
+                    <td class="col-status" id="ai-fix-{{ cve.cve_id|replace('-','_') }}">
+                        {%- set fs = cve.fix_status or 'Unknown' -%}
+                        {%- set fsl = fs|lower -%}
+                        {% if fsl in ['fix available','fixed','fully fixed'] %}
+                        <span class="fix-badge available"><i class="bi bi-check-circle-fill"></i>{{ fs }}</span>
+                        {% elif fsl in ['workaround available','partially fixed'] %}
+                        <span class="fix-badge workaround"><i class="bi bi-exclamation-triangle-fill"></i>{{ fs }}</span>
+                        {% elif fsl in ['not fixed','pending','check needed'] %}
+                        <span class="fix-badge notfixed"><i class="bi bi-x-circle-fill"></i>{{ fs }}</span>
+                        {% else %}
+                        <span class="fix-badge unknown ai-pending"><i class="bi bi-question-circle"></i>{{ fs }}</span>
+                        {% endif %}
+                        {% if cve.fixed_version and cve.fixed_version not in ['Unknown','','None'] %}
+                        <span class="fixed-in"><i class="bi bi-tag me-1"></i>{{ cve.fixed_version }}</span>
+                        {% endif %}
+                    </td>
+                    <!-- Remediation (lazy) -->
+                    <td class="col-rem" id="ai-rem-{{ cve.cve_id|replace('-','_') }}">
+                        <div class="cell-scroll">
+                            {%- set badr = ['information not available','no remediation information available','no remediation info yet',''] -%}
+                            {% if cve.remediation and cve.remediation|lower not in badr %}
+                            <div class="rem-box"><i class="bi bi-shield-check text-success me-1" style="font-size:.68rem;"></i>{{ cve.remediation }}</div>
+                            {% else %}
+                            <div class="rem-box pending ai-pending">
+                                <span class="skeleton-line"></span>
+                                <span class="skeleton-line" style="width:55%"></span>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </td>
+                    <!-- Industry -->
+                    <td class="col-ind">
+                        <div class="cell-scroll" style="max-height:75px;">
+                            {% if inds %}
+                                {% for ind in inds %}
+                                <span class="ind-tag {{ ind }}">
+                                    {%- if ind=='automotive' %}🚗{%- elif ind=='it' %}💻{%- elif ind=='iot' %}📡{%- elif ind=='industrial' %}🏭{%- elif ind=='telecom' %}📱{%- elif ind=='medical' %}🏥{%- endif %}
+                                    {{ ind|title }}</span>
+                                {% endfor %}
+                            {% else %}<span style="color:#9ca3af;font-size:.7rem;">—</span>{% endif %}
+                        </div>
+                    </td>
+                    <!-- Companies -->
+                    <td class="col-comp">
+                        <div class="cell-scroll" style="max-height:75px;">
+                            {% if cve.affected_companies and cve.affected_companies|length > 0 %}
+                                {% for c in cve.affected_companies %}
+                                    {% if c and c not in ['[]','Unknown','None',''] %}
+                                    <span class="comp-tag">{{ c }}</span>
+                                    {% endif %}
+                                {% endfor %}
+                            {% else %}<span style="color:#9ca3af;">—</span>{% endif %}
+                        </div>
+                    </td>
+                    <!-- Matched -->
+                    <td class="col-match">
+                        <div class="cell-scroll" style="max-height:75px;">
+                            {% if cve.matched_keywords and cve.matched_keywords|length > 0 %}
+                                {% for kw in cve.matched_keywords %}
+                                <span class="match-tag">{{ kw }}</span>
+                                {% endfor %}
+                            {% else %}<span style="color:#9ca3af;">—</span>{% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
                 </tbody>
             </table>
         </div>
@@ -461,85 +1159,621 @@
 
     <!-- Pagination -->
     {% if total_pages and total_pages > 1 %}
-    <nav class="mt-4">
+    <nav class="mt-3">
         <ul class="pagination justify-content-center">
-            <li class="page-item {% if page == 1 %}disabled{% endif %}">
-                <a class="page-link" href="?page={{ page-1 }}&keywords={{ active_keywords|join(',') }}">Previous</a>
+            <li class="page-item {% if page==1 %}disabled{% endif %}">
+                <a class="page-link"
+                   href="?page={{ page-1 }}&kw={{ request.args.get('kw','') }}&sv={{ request.args.get('sv','') }}&use_ai={{ 'true' if use_ai else 'false' }}&tab={{ request.args.get('tab','single') }}">
+                    <i class="bi bi-chevron-left"></i>
+                </a>
             </li>
-            {% for p in range(1, total_pages + 1) %}
+            {% for p in range(1, total_pages+1) %}
                 {% if p >= page-2 and p <= page+2 %}
-                <li class="page-item {% if p == page %}active{% endif %}">
-                    <a class="page-link" href="?page={{ p }}&keywords={{ active_keywords|join(',') }}">{{ p }}</a>
+                <li class="page-item {% if p==page %}active{% endif %}">
+                    <a class="page-link"
+                       href="?page={{ p }}&kw={{ request.args.get('kw','') }}&sv={{ request.args.get('sv','') }}&use_ai={{ 'true' if use_ai else 'false' }}&tab={{ request.args.get('tab','single') }}">{{ p }}</a>
                 </li>
                 {% endif %}
             {% endfor %}
-            <li class="page-item {% if page == total_pages %}disabled{% endif %}">
-                <a class="page-link" href="?page={{ page+1 }}&keywords={{ active_keywords|join(',') }}">Next</a>
+            <li class="page-item {% if page==total_pages %}disabled{% endif %}">
+                <a class="page-link"
+                   href="?page={{ page+1 }}&kw={{ request.args.get('kw','') }}&sv={{ request.args.get('sv','') }}&use_ai={{ 'true' if use_ai else 'false' }}&tab={{ request.args.get('tab','single') }}">
+                    <i class="bi bi-chevron-right"></i>
+                </a>
             </li>
         </ul>
     </nav>
     {% endif %}
 
+    {% else %}
+    <div class="empty-state">
+        <i class="bi bi-inbox d-block mb-3"></i>
+        <h5 class="text-muted">No CVEs Found</h5>
+        <p class="text-muted" style="font-size:.8rem;">
+            Try a different keyword, change the severity filter, or upload a BOM file
+        </p>
+    </div>
+    {% endif %}
+
+</div><!-- /app-body -->
+
+<!-- Spinner -->
+<div class="spinner-overlay" id="spinnerOverlay">
+    <div class="spinner-box">
+        <div class="spinner-border text-primary mb-3" style="width:2rem;height:2rem;" role="status"></div>
+        <h6 class="mb-1">Processing…</h6>
+        <p>AI analysis may take a few moments</p>
+    </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    // Load stats
-    fetchStats();
-    loadRecentAlerts();
-    loadBomCount();
+// ═══════════════════════════════════════════════════════
+//  Constants from Jinja
+// ═══════════════════════════════════════════════════════
+const PAGE_KEYWORDS = {{ active_keywords | tojson }};
+const PAGE_SEVERITY = {{ severity_filter | tojson }};
+const AI_ON         = {{ 'true' if use_ai else 'false' }};
+
+const PROVIDER_COLORS = { deepseek:'#34d399', openai:'#a78bfa', claude:'#f97316', ollama:'#38bdf8' };
+const PROVIDER_LABELS = { deepseek:'DeepSeek', openai:'OpenAI', claude:'Claude', ollama:'Ollama (Local)' };
+
+// ═══════════════════════════════════════════════════════
+//  STATS — fetch /stats and populate all cards + banner
+// ═══════════════════════════════════════════════════════
+async function loadStats() {
+    try {
+        const r = await fetch('/stats');
+        if (!r.ok) return;
+        const d = await r.json();
+
+        // Date range card
+        if (d.oldest_cve && d.newest_cve) {
+            const fmt = dt => new Date(dt).toLocaleDateString('en-US',
+                { year:'numeric', month:'2-digit', day:'2-digit' })
+                .replace(/(\d+)\/(\d+)\/(\d+)/, '$3-$1-$2');
+            document.getElementById('dateRange').textContent =
+                `${d.oldest_cve.slice(0,10)} – ${d.newest_cve.slice(0,10)}`;
+        }
+
+        // NEW (7 Days) card
+        document.getElementById('new7Days').textContent = (d.new_7_days || 0).toLocaleString();
+
+        // AI count
+        const aiEl = document.getElementById('aiCount');
+        if (aiEl) aiEl.textContent = (d.ai_enhanced || 0).toLocaleString();
+
+        // Update banner
+        const banner = document.getElementById('bannerText');
+        if (d.last_update) {
+            banner.textContent = `Daily updates run at 2:00 AM UTC. Last update: ${d.last_update}`;
+        } else {
+            banner.textContent = 'Daily updates run at 2:00 AM UTC. Last update: never (run one now)';
+        }
+    } catch(e) { console.warn('stats error', e); }
+
+    // Keyword-aware severity counts
+    try {
+        const kw  = PAGE_KEYWORDS.join(',');
+        const sev = PAGE_SEVERITY || '';
+        const url = kw
+            ? `/keyword-stats?keywords=${encodeURIComponent(kw)}&severity=${encodeURIComponent(sev)}`
+            : '/keyword-stats';
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const d = await r.json();
+
+        document.getElementById('totalCves').textContent = (d.total    || 0).toLocaleString();
+        document.getElementById('cntCrit').textContent   = (d.critical || 0).toLocaleString();
+        document.getElementById('cntHigh').textContent   = (d.high     || 0).toLocaleString();
+        document.getElementById('cntMed').textContent    = (d.medium   || 0).toLocaleString();
+        document.getElementById('cntLow').textContent    = (d.low      || 0).toLocaleString();
+
+        const ctx  = document.getElementById('statsCtx');
+        const card = document.getElementById('totalCard');
+        if (d.filtered && kw) {
+            const kwList = kw.split(',').map(k=>k.trim()).filter(Boolean);
+            ctx.textContent   = kwList.length === 1 ? `for "${kwList[0]}"` : `for ${kwList.length} keywords`;
+            ctx.style.display = 'inline';
+            document.getElementById('totalLabel').textContent = 'Matching CVEs';
+            if (card) card.style.borderLeft = '3px solid #059669';
+        } else {
+            ctx.style.display = 'none';
+            document.getElementById('totalLabel').textContent = 'Total CVEs';
+            if (card) card.style.borderLeft = '';
+        }
+    } catch(e) { console.warn('keyword-stats error', e); }
+}
+
+// ═══════════════════════════════════════════════════════
+//  RECENT ALERTS — fetch /api/alerts/recent
+// ═══════════════════════════════════════════════════════
+async function loadAlerts() {
+    const body  = document.getElementById('alertsBody');
+    const badge = document.getElementById('alertsBadge');
+    try {
+        const r = await fetch('/api/alerts/recent');
+        if (!r.ok) throw new Error('non-200');
+        const alerts = await r.json();
+
+        if (!alerts || alerts.length === 0) {
+            body.innerHTML = '<div class="alerts-empty"><i class="bi bi-check-circle text-success me-2"></i>No alerts in last 24 hours</div>';
+            return;
+        }
+
+        badge.textContent   = alerts.length;
+        badge.style.display = 'inline';
+
+        body.innerHTML = alerts.map(a => {
+            const time = a.sent_at
+                ? new Date(a.sent_at).toLocaleString('en-US',
+                    {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
+                : '';
+            return `
+            <div class="alert-row">
+                <a href="https://nvd.nist.gov/vuln/detail/${esc(a.cve_id)}"
+                   target="_blank" class="alert-cve-id">${esc(a.cve_id)}</a>
+                <span class="alert-keyword">${esc(a.keyword || '')}</span>
+                <span class="alert-bom">${esc(a.bom_name || '')}</span>
+                <span class="alert-email"><i class="bi bi-envelope me-1"></i>${esc(a.email || '')}</span>
+                <span class="alert-time">${time}</span>
+            </div>`;
+        }).join('');
+    } catch(e) {
+        body.innerHTML = '<div class="alerts-empty text-muted"><i class="bi bi-wifi-off me-2"></i>Could not load alerts (PostgreSQL may not be connected)</div>';
+    }
+}
+
+// ═══════════════════════════════════════════════════════
+//  KEYWORD COUNTS
+// ═══════════════════════════════════════════════════════
+async function loadKeywordCounts() {
+    const kw = PAGE_KEYWORDS.join(',');
+    if (!kw) return;
+    try {
+        const r = await fetch(
+            `/keyword-counts?keywords=${encodeURIComponent(kw)}&severity=${encodeURIComponent(PAGE_SEVERITY||'')}`
+        );
+        if (!r.ok) return;
+        const counts = await r.json();
+        PAGE_KEYWORDS.forEach((keyword, i) => {
+            const el = document.getElementById(`kwcount-${i+1}`);
+            if (!el) return;
+            const n = counts[keyword] ?? 0;
+            el.textContent = n.toLocaleString();
+            el.title = `${n.toLocaleString()} CVEs match "${keyword}"`;
+            el.style.background = n===0 ? 'rgba(220,38,38,.12)' : n<10 ? 'rgba(217,119,6,.12)' : n<100 ? 'rgba(2,132,199,.12)' : 'rgba(5,122,85,.12)';
+            el.style.color      = n===0 ? '#b91c1c' : n<10 ? '#92400e' : n<100 ? '#0369a1' : '#065f46';
+        });
+    } catch(e) { console.warn('keyword counts error', e); }
+}
+
+// ═══════════════════════════════════════════════════════
+//  INDUSTRY COUNTS + FILTER
+// ═══════════════════════════════════════════════════════
+function countIndustries() {
+    const rows   = document.querySelectorAll('#cveTableBody tr');
+    const counts = {all:0, automotive:0, it:0, iot:0, industrial:0, telecom:0, medical:0};
+    rows.forEach(r => {
+        counts.all++;
+        (r.dataset.industries||'').split(',').forEach(i => { if(counts[i]!==undefined) counts[i]++; });
+    });
+    Object.keys(counts).forEach(k => {
+        const el = document.getElementById(`cnt-${k}`);
+        if (el) el.textContent = counts[k];
+    });
+}
+
+function filterInd(ind, btn) {
+    document.querySelectorAll('.ind-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    let vis = 0;
+    document.querySelectorAll('#cveTableBody tr').forEach(r => {
+        const show = ind === 'all' || (r.dataset.industries||'').split(',').includes(ind);
+        r.classList.toggle('hidden-row', !show);
+        if (show) vis++;
+    });
+    document.getElementById('visibleCount').textContent = vis;
+    const note = document.getElementById('indNote');
+    note.style.display = ind === 'all' ? 'none' : 'inline';
+    if (ind !== 'all') note.textContent = `Showing ${vis} CVEs`;
+}
+
+// ═══════════════════════════════════════════════════════
+//  MANUAL UPDATE TRIGGER
+// ═══════════════════════════════════════════════════════
+let _updateRunning = false;
+
+async function triggerUpdate() {
+    if (_updateRunning) return;
+    _updateRunning = true;
+
+    const btn          = document.getElementById('updateBtn');
+    const icon         = document.getElementById('updateIcon');
+    const bannerBtn    = document.getElementById('bannerRefreshBtn');
+    const bannerIcon   = document.getElementById('bannerRefreshIcon');
+    const bannerText   = document.getElementById('bannerText');
+
+    btn.disabled = true;
+    icon.className = 'bi bi-arrow-clockwise';
+    icon.style.animation = 'spin .8s linear infinite';
+    bannerIcon.className = 'bi bi-arrow-clockwise';
+    bannerBtn.classList.add('spinning');
+    bannerText.textContent = 'Fetching new CVEs from NVD… this may take 1–2 minutes';
+
+    try {
+        const r = await fetch('/update-cve', {
+            method:      'POST',
+            credentials: 'include',
+            headers:     { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body:        JSON.stringify({ csrf_token: '{{ csrf_token }}' }),
+        });
+        // Update started in background — poll stats after a delay
+        bannerText.textContent = 'Update running in background… refreshing stats in 15s';
+
+        setTimeout(async () => {
+            await loadStats();
+            await loadAlerts();
+            bannerText.textContent = 'Update complete. Stats refreshed.';
+            setTimeout(() => loadStats(), 0); // update banner with new last_update
+        }, 15000);
+
+    } catch(e) {
+        bannerText.textContent = 'Update request failed. Check /api/nvd-status for details.';
+    } finally {
+        setTimeout(() => {
+            btn.disabled = false;
+            icon.className = 'bi bi-cloud-arrow-down';
+            icon.style.animation = '';
+            bannerBtn.classList.remove('spinning');
+            bannerIcon.className = 'bi bi-arrow-clockwise';
+            _updateRunning = false;
+        }, 16000);
+    }
+}
+
+// ═══════════════════════════════════════════════════════
+//  AI TOGGLE
+// ═══════════════════════════════════════════════════════
+function toggleAI() {
+    const on  = document.getElementById('aiToggle').checked;
+    const url = new URL(window.location.href);
+    url.searchParams.set('use_ai', on ? 'true' : 'false');
+    url.searchParams.delete('page');
+    window.location.href = url.toString();
+}
+
+// ═══════════════════════════════════════════════════════
+//  AI PROVIDER PANEL
+// ═══════════════════════════════════════════════════════
+function getSaved() { try { return JSON.parse(localStorage.getItem('cve_ai')||'{}'); } catch{return{};} }
+function saveSetting(p,k,m) { localStorage.setItem('cve_ai',JSON.stringify({provider:p,key:k,model:m})); }
+
+(function initUI() {
+    const s = getSaved();
+    if (s.provider) {
+        const opt = document.querySelector(`[data-provider="${s.provider}"]`);
+        if (opt) activateOpt(opt, false);
+    }
+    if (s.key) {
+        const inp = document.getElementById('apiKeyInput');
+        if (inp) inp.value = s.key;
+    }
+    updatePill(s.provider || 'deepseek');
+    const first = document.querySelector('.prov-opt.active');
+    if (first) fillModels(first, s.model || '');
+})();
+
+function togglePanel(e) {
+    e.stopPropagation();
+    document.getElementById('aiPanel').classList.toggle('open');
+}
+document.addEventListener('click', e => {
+    const panel = document.getElementById('aiPanel');
+    const btn   = document.getElementById('providerBtn');
+    if (panel && !panel.contains(e.target) && !btn.contains(e.target))
+        panel.classList.remove('open');
 });
 
-function fetchStats() {
-    fetch('/stats')
-        .then(r => r.json())
-        .then(data => {
-            document.getElementById('criticalCount').textContent = data.critical || 0;
-        });
+function selectProvider(el) { activateOpt(el, true); }
+
+function activateOpt(el, reset) {
+    document.querySelectorAll('.prov-opt').forEach(o => o.classList.remove('active'));
+    el.classList.add('active');
+    const p      = el.dataset.provider;
+    const isOll  = p === 'ollama';
+    const keyRow = document.getElementById('keyRow');
+    const keyInp = document.getElementById('apiKeyInput');
+    keyRow.style.opacity = isOll ? '0.4' : '1';
+    keyInp.disabled      = isOll;
+    keyInp.placeholder   = isOll ? 'No API key needed' : (el.dataset.placeholder || 'API key');
+    if (reset && !isOll) keyInp.value = '';
+    fillModels(el, getSaved().model || '');
+    updatePill(p);
+    clearTest();
 }
 
-function loadRecentAlerts() {
-    fetch('/api/alerts/recent')
-        .then(r => r.json())
-        .then(alerts => {
-            const container = document.getElementById('recentAlerts');
-            if (alerts.length === 0) {
-                container.innerHTML = '<div class="text-muted text-center py-2">No alerts in last 24h</div>';
-                return;
-            }
-            
-            let html = '';
-            alerts.forEach(alert => {
-                const date = new Date(alert.sent_at);
-                const timeStr = date.toLocaleTimeString();
-                html += `
-                    <div class="alert-item">
-                        <strong>${alert.cve_id}</strong> 
-                        <span class="badge bg-info">${alert.keyword}</span>
-                        <br>
-                        <small>${alert.email} - ${alert.bom_name}</small>
-                        <span class="time float-end">${timeStr}</span>
-                    </div>
-                `;
+function fillModels(el, selected) {
+    const models = JSON.parse(el.dataset.models || '[]');
+    const sel    = document.getElementById('modelSel');
+    sel.innerHTML = '';
+    models.forEach(m => {
+        const o = document.createElement('option');
+        o.value = m; o.textContent = m;
+        if (m === selected) o.selected = true;
+        sel.appendChild(o);
+    });
+}
+
+function updatePill(p) {
+    const dot = document.getElementById('providerDot');
+    const lbl = document.getElementById('providerLabel');
+    if (dot) dot.style.background = PROVIDER_COLORS[p] || '#94a3b8';
+    if (lbl) lbl.textContent = PROVIDER_LABELS[p] || p;
+}
+
+function toggleEye() {
+    const inp = document.getElementById('apiKeyInput');
+    const ico = document.getElementById('eyeIcon');
+    inp.type  = inp.type === 'password' ? 'text' : 'password';
+    ico.className = inp.type === 'password' ? 'bi bi-eye' : 'bi bi-eye-slash';
+}
+
+function clearTest() {
+    const el = document.getElementById('testResult');
+    if (el) { el.textContent = ''; el.className = 'test-result'; }
+}
+
+async function applySettings() {
+    const provider = document.querySelector('.prov-opt.active')?.dataset.provider || 'deepseek';
+    const api_key  = document.getElementById('apiKeyInput').value.trim();
+    const model    = document.getElementById('modelSel').value;
+    const btn      = document.getElementById('applyBtn');
+    const res      = document.getElementById('testResult');
+
+    if (provider !== 'ollama' && !api_key) {
+        res.textContent = '⚠ Please enter your API key';
+        res.className   = 'test-result err';
+        return;
+    }
+
+    btn.disabled = true;
+    document.getElementById('applyText').innerHTML =
+        '<span class="spinner-border spinner-border-sm me-1" style="width:.65rem;height:.65rem"></span>Testing…';
+    clearTest();
+
+    try {
+        const r = await fetch('/settings/save', {
+            method:      'POST',
+            credentials: 'include',
+            headers:     { 'Content-Type': 'application/json' },
+            body:        JSON.stringify({ provider, api_key, model }),
+        });
+        const d = await r.json();
+        if (d.ok) {
+            res.textContent = '✓ ' + d.message;
+            res.className   = 'test-result ok';
+            saveSetting(provider, api_key, model);
+            updatePill(provider);
+            setTimeout(() => { document.getElementById('aiPanel').classList.remove('open'); clearTest(); }, 2000);
+        } else {
+            res.textContent = '✗ ' + d.message;
+            res.className   = 'test-result err';
+        }
+    } catch(e) {
+        res.textContent = '✗ Network error';
+        res.className   = 'test-result err';
+    }
+    btn.disabled = false;
+    document.getElementById('applyText').innerHTML = '<i class="bi bi-check-lg me-1"></i>Apply &amp; Test';
+}
+
+// ═══════════════════════════════════════════════════════
+//  LAZY AI LOADER
+// ═══════════════════════════════════════════════════════
+function collectPending() {
+    const out = [];
+    document.querySelectorAll('#cveTableBody tr').forEach(r => {
+        const id = r.dataset.cveId;
+        if (!id || !r.querySelector('.ai-pending')) return;
+        const d = r.querySelector('.desc-box');
+        out.push({ cve_id: id, description: d ? d.textContent.trim() : '' });
+    });
+    return out;
+}
+
+function esc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function applyAIRow(cveId, data) {
+    const sid = cveId.replace(/-/g,'_');
+    const sum = document.getElementById(`ai-sum-${sid}`);
+    if (sum && sum.querySelector('.ai-pending') && data.summary)
+        sum.querySelector('.cell-scroll').innerHTML =
+            `<div class="ai-box"><i class="bi bi-robot text-primary me-1" style="font-size:.68rem;"></i>${esc(data.summary)}</div>`;
+
+    const ver = document.getElementById(`ai-ver-${sid}`);
+    if (ver && data.affected_version && data.affected_version !== 'Unknown')
+        ver.innerHTML = `<span class="ver-badge">${esc(data.affected_version)}</span>`;
+
+    const fix = document.getElementById(`ai-fix-${sid}`);
+    if (fix && data.fix_status) {
+        const fs = data.fix_status, fsl = fs.toLowerCase();
+        let badge = '';
+        if (['fix available','fixed','fully fixed'].includes(fsl))
+            badge = `<span class="fix-badge available"><i class="bi bi-check-circle-fill"></i>${esc(fs)}</span>`;
+        else if (['workaround available','partially fixed'].includes(fsl))
+            badge = `<span class="fix-badge workaround"><i class="bi bi-exclamation-triangle-fill"></i>${esc(fs)}</span>`;
+        else if (['not fixed','pending','check needed'].includes(fsl))
+            badge = `<span class="fix-badge notfixed"><i class="bi bi-x-circle-fill"></i>${esc(fs)}</span>`;
+        else
+            badge = `<span class="fix-badge unknown"><i class="bi bi-question-circle"></i>${esc(fs)}</span>`;
+        if (data.fixed_version && data.fixed_version !== 'Unknown')
+            badge += `<span class="fixed-in"><i class="bi bi-tag me-1"></i>${esc(data.fixed_version)}</span>`;
+        fix.innerHTML = badge;
+    }
+
+    const rem = document.getElementById(`ai-rem-${sid}`);
+    if (rem && rem.querySelector('.ai-pending') && data.remediation)
+        rem.querySelector('.cell-scroll').innerHTML =
+            `<div class="rem-box"><i class="bi bi-shield-check text-success me-1" style="font-size:.68rem;"></i>${esc(data.remediation)}</div>`;
+}
+
+async function runLazyAI() {
+    if (!AI_ON) return;
+    const pending = collectPending();
+    if (!pending.length) return;
+
+    const bar   = document.getElementById('aiProgressBar');
+    const fill  = document.getElementById('aiProgressFill');
+    const toast = document.getElementById('aiToast');
+    const txt   = document.getElementById('aiToastText');
+
+    bar.style.display = 'block';
+    toast.classList.add('show');
+
+    let done = 0;
+    const tot = pending.length;
+
+    for (let i = 0; i < pending.length; i += 5) {
+        const batch = pending.slice(i, i+5);
+        txt.textContent = `AI analysing ${done+1}–${Math.min(done+batch.length, tot)} of ${tot}…`;
+        try {
+            const r = await fetch('/api/ai-analyze', {
+                method:'POST', credentials:'include',
+                headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({cves: batch}),
             });
-            container.innerHTML = html;
-        });
+            if (r.ok) {
+                const res = await r.json();
+                Object.entries(res).forEach(([id, d]) => { if (!d.error) applyAIRow(id, d); });
+            }
+        } catch(e) { console.error('AI batch error', e); }
+        done += batch.length;
+        fill.style.width = `${Math.round((done/tot)*100)}%`;
+        if (i+5 < pending.length) await new Promise(r => setTimeout(r, 450));
+    }
+
+    fill.style.width = '100%';
+    txt.textContent  = `✓ AI analysis complete (${tot} CVEs)`;
+    setTimeout(() => { bar.style.display='none'; fill.style.width='0%'; toast.classList.remove('show'); }, 2500);
 }
 
-function loadBomCount() {
-    fetch('/api/boms')
-        .then(r => r.json())
-        .then(boms => {
-            document.getElementById('bomCount').textContent = boms.length;
-        });
+// ═══════════════════════════════════════════════════════
+//  KEYWORD REMOVE
+// ═══════════════════════════════════════════════════════
+function removeKeyword(kw) {
+    const p   = new URLSearchParams(window.location.search);
+    const enc = p.get('kw') || '';
+    let kwList = [];
+    if (enc) {
+        try {
+            let t = enc + '='.repeat((4 - enc.length%4)%4);
+            const raw = atob(t.replace(/-/g,'+').replace(/_/g,'/'));
+            kwList = raw.split(',').map(k=>k.trim()).filter(k=>k && k!==kw);
+        } catch(e) { kwList = []; }
+    } else {
+        kwList = (p.get('keywords')||'').split(',').filter(k=>k&&k!==kw);
+    }
+    if (kwList.length > 0) {
+        const b64 = btoa(kwList.join(',')).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+        p.set('kw', b64); p.delete('keywords'); p.delete('page');
+        window.location.href = '?' + p.toString();
+    } else {
+        window.location.href = '/';
+    }
 }
 
-// NEW count calculation
-setTimeout(() => {
-    const newBadges = document.querySelectorAll('.new-badge').length;
-    document.getElementById('newCount').textContent = newBadges;
-}, 500);
+// ═══════════════════════════════════════════════════════
+//  MISC
+// ═══════════════════════════════════════════════════════
+function showLoading() {
+    const el = document.getElementById('spinnerOverlay');
+    if (el) { el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),30000); }
+}
+
+function initBomUpload() {
+    const input = document.getElementById('bomFile');
+    const form  = document.getElementById('bomForm');
+    const zone  = document.getElementById('uploadZone');
+    const lbl   = document.getElementById('uploadLabel');
+    if (!input||!form||!zone) return;
+
+    input.addEventListener('change', function() {
+        if (this.files.length) {
+            if (lbl) lbl.textContent = `📄 ${this.files[0].name}`;
+            showLoading(); form.submit();
+        }
+    });
+
+    ['dragenter','dragover','dragleave','drop'].forEach(ev =>
+        zone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); }));
+    zone.addEventListener('dragover',  ()=>zone.style.borderColor='var(--primary)');
+    zone.addEventListener('dragleave', ()=>zone.style.borderColor='#93c5fd');
+    zone.addEventListener('drop', e => {
+        zone.style.borderColor = '#93c5fd';
+        const files = e.dataTransfer.files;
+        if (files.length) {
+            try { const dt=new DataTransfer(); dt.items.add(files[0]); input.files=dt.files; } catch(err){}
+            if (lbl) lbl.textContent = `📄 ${files[0].name}`;
+            showLoading(); form.submit();
+        }
+    });
+}
+
+// ═══════════════════════════════════════════════════════
+//  BOOT
+// ═══════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+    loadStats();
+    loadAlerts();
+    loadKeywordCounts();
+    countIndustries();
+    initBomUpload();
+
+    // Lazy AI after paint
+    setTimeout(runLazyAI, 700);
+
+    // Activate correct tab
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if (tab) {
+        const el = document.getElementById(`tab-${tab}`);
+        if (el) bootstrap.Tab.getOrCreateInstance(el).show();
+    }
+
+    // Show error from URL
+    const err = new URLSearchParams(window.location.search).get('error');
+    if (err) {
+        const div = document.createElement('div');
+        div.className = 'alert alert-danger alert-dismissible fade show mb-3';
+        div.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-2"></i>${decodeURIComponent(err)}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
+        document.querySelector('.app-body').prepend(div);
+    }
+
+    // Show update-started toast
+    if (new URLSearchParams(window.location.search).get('update') === 'started') {
+        const div = document.createElement('div');
+        div.className = 'alert alert-success alert-dismissible fade show mb-3';
+        div.innerHTML = `<i class="bi bi-cloud-arrow-down me-2"></i>Database update started in background. Stats will refresh automatically.
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
+        document.querySelector('.app-body').prepend(div);
+        setTimeout(() => { loadStats(); loadAlerts(); }, 15000);
+    }
+
+    // Form validation
+    document.getElementById('singleForm')?.addEventListener('submit', e => {
+        const kw = e.target.querySelector('input[name="keyword"]');
+        if (kw && !kw.value.trim()) { e.preventDefault(); return; }
+        showLoading();
+    });
+    document.getElementById('multiForm')?.addEventListener('submit', e => {
+        const ta = e.target.querySelector('textarea');
+        if (ta && !ta.value.trim()) { e.preventDefault(); return; }
+        showLoading();
+    });
+});
 </script>
-
 </body>
 </html>
