@@ -1332,6 +1332,7 @@ def index():
 
         return render_template(
             "index.html",
+            view="dashboard",
             cves=cves,
             keyword=keyword,
             severity_filter=severity_filter,
@@ -1346,6 +1347,7 @@ def index():
         import traceback; traceback.print_exc()
         return render_template(
             "index.html",
+            view="dashboard",
             cves=[], keyword=keyword, severity_filter=severity_filter,
             active_keywords=[], page=1, total_pages=1,
             use_ai=use_ai, env_boms=ENV_BOMS,
@@ -1714,20 +1716,28 @@ def update_cve():
 
 @app.route("/admin", methods=["GET", "POST"])
 def admin():
+    login_error = None
+
     if request.method == "POST":
-        username = request.form.get("username","")
-        password = request.form.get("password","")
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
         if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
             session["admin_logged_in"] = True
-            session.permanent          = True
+            session.permanent = True
         else:
-            return render_template("admin_login.html", error="Invalid credentials")
+            login_error = "Invalid username or password"
 
     if not session.get("admin_logged_in"):
-        return render_template("admin_login.html", error=None)
+        return render_template("index.html",
+                               view="admin_login",
+                               login_error=login_error,
+                               csrf_token=generate_csrf_token(),
+                               cves=[], active_keywords=[], keyword=None,
+                               severity_filter="", use_ai=False,
+                               total_pages=1, page=1, env_boms=ENV_BOMS)
 
-    # Gather info
-    db_size = os.path.getsize(DB) / (1024*1024) if os.path.exists(DB) else 0
+    # Gather admin data
+    db_size = os.path.getsize(DB) / (1024 * 1024) if os.path.exists(DB) else 0
     try:
         conn   = sqlite3.connect(DB)
         cur    = conn.cursor()
@@ -1751,7 +1761,8 @@ def admin():
             """)
             recent_alerts = [
                 {"email": r[0], "cve_id": r[1], "bom_name": r[2],
-                 "keyword": r[3], "sent_at": r[4].strftime("%Y-%m-%d %H:%M") if r[4] else ""}
+                 "keyword": r[3],
+                 "sent_at": r[4].strftime("%Y-%m-%d %H:%M") if r[4] else ""}
                 for r in cur.fetchall()
             ]
             cur.close()
@@ -1761,7 +1772,8 @@ def admin():
 
     scheduler_next = schedule.next_run().strftime("%Y-%m-%d %H:%M UTC") if schedule.next_run() else "N/A"
 
-    return render_template("admin.html",
+    return render_template("index.html",
+                           view="admin",
                            db_size_mb=f"{db_size:.1f}",
                            total_cves=total,
                            latest_cve=latest,
@@ -1769,7 +1781,11 @@ def admin():
                            recent_alerts=recent_alerts,
                            scheduler_next=scheduler_next,
                            smtp_configured=bool(SMTP_USERNAME and SMTP_PASSWORD),
-                           pg_connected=bool(postgres_pool))
+                           pg_connected=bool(postgres_pool),
+                           csrf_token=generate_csrf_token(),
+                           cves=[], active_keywords=[], keyword=None,
+                           severity_filter="", use_ai=False,
+                           total_pages=1, page=1)
 
 
 @app.route("/admin/logout")
