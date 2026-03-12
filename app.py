@@ -107,7 +107,7 @@ def load_boms_from_env():
 ENV_BOMS = load_boms_from_env()
 
 # ============================================================
-# DOWNLOAD DATABASE FROM GITHUB - IMPROVED VALIDATION
+# DOWNLOAD DATABASE FROM GITHUB - FIXED VERSION
 # ============================================================
 
 def download_cve_from_github():
@@ -198,7 +198,7 @@ def download_cve_from_github():
             optimize_database_light()
             return True
         except Exception as e:
-            print(f"❌ Downloaded file is corrupted: {e}")
+            print(f"❌ Downloaded file verification failed: {e}")
             if os.path.exists(temp_db):
                 os.remove(temp_db)
             return False
@@ -803,7 +803,7 @@ def check_boms_and_send_alerts(new_cves):
             print(f"   📧 Sent {len(matches)} alerts for {bom['name']}")
 
 # ============================================================
-# SCHEDULER FOR DAILY UPDATES AND MONTHLY VACUUM - FIXED
+# SCHEDULER FOR DAILY UPDATES AND MONTHLY VACUUM
 # ============================================================
 
 def run_scheduler():
@@ -1087,12 +1087,12 @@ def init_database():
 
 def get_db_connection():
     conn = sqlite3.connect(DB)
-    # Apply optimal settings
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA temp_store=MEMORY")
-    conn.execute("PRAGMA mmap_size=268435456")
-    conn.execute("PRAGMA cache_size=-2000")
+    # Apply optimal settings for memory efficiency
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA cache_size = -2000")  # 2MB cache
+    conn.execute("PRAGMA mmap_size = 268435456")  # 256MB memory map
+    conn.execute("PRAGMA temp_store = MEMORY")
     conn.row_factory = sqlite3.Row
     return conn
 
