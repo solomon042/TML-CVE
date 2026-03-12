@@ -107,32 +107,50 @@ def load_boms_from_env():
 ENV_BOMS = load_boms_from_env()
 
 # ============================================================
-# DOWNLOAD DATABASE FROM GITHUB - ROBUST VERSION WITH CORRUPTION HANDLING
+# DOWNLOAD DATABASE FROM GITHUB - IMPROVED VALIDATION
 # ============================================================
 
 def download_cve_from_github():
-    """Download CVE database from GitHub Releases - with corruption handling"""
+    """Download CVE database from GitHub Releases - with improved validation"""
     
     # Check if file exists and is valid
     if os.path.exists(DB):
-        try:
-            # Try to open and query the database
-            test_conn = sqlite3.connect(DB)
-            test_conn.execute("SELECT count(*) FROM cves").fetchone()
-            test_conn.close()
-            size_mb = os.path.getsize(DB) / (1024 * 1024)
-            print(f"✅ Valid database exists ({size_mb:.1f} MB)")
-            
-            # Run quick optimization
-            optimize_database_light()
-            return True
-        except Exception as e:
-            print(f"⚠️ Database is corrupted, deleting: {e}")
+        file_size = os.path.getsize(DB)
+        
+        # 1. Check if file is too small (likely empty or corrupted)
+        if file_size < 1024 * 1024:  # Less than 1MB? Definitely not a real CVE database.
+            print(f"⚠️ Existing database is too small ({file_size} bytes). Deleting and re-downloading.")
             try:
                 os.remove(DB)
-                print("✅ Corrupted file removed")
-            except:
-                print("⚠️ Could not delete corrupted file")
+                print("✅ Empty/corrupted file removed")
+            except OSError as e:
+                print(f"⚠️ Could not delete file: {e}")
+        else:
+            # File size seems plausible, now try to open it as SQLite
+            try:
+                test_conn = sqlite3.connect(DB)
+                # Also check if the 'cves' table exists
+                cursor = test_conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cves'")
+                if cursor.fetchone() is None:
+                    raise Exception("Database does not contain 'cves' table")
+                
+                cursor.execute("SELECT count(*) FROM cves")
+                count = cursor.fetchone()[0]
+                test_conn.close()
+                size_mb = file_size / (1024 * 1024)
+                print(f"✅ Valid database exists ({size_mb:.1f} MB) with {count:,} CVEs")
+                
+                # Run quick optimization
+                optimize_database_light()
+                return True
+            except Exception as e:
+                print(f"⚠️ Existing database is corrupted or invalid, deleting: {e}")
+                try:
+                    os.remove(DB)
+                    print("✅ Corrupted file removed")
+                except OSError as rm_err:
+                    print(f"⚠️ Could not delete corrupted file: {rm_err}")
     
     # Download to temporary file first
     download_url = f"https://github.com/{GITHUB_REPO}/releases/download/{GITHUB_TAG}/{GITHUB_ASSET}"
@@ -162,13 +180,19 @@ def download_cve_from_github():
         # Verify the temporary file
         try:
             test_conn = sqlite3.connect(temp_db)
-            test_conn.execute("SELECT count(*) FROM cves").fetchone()
+            cursor = test_conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cves'")
+            if cursor.fetchone() is None:
+                raise Exception("Downloaded database does not contain 'cves' table")
+            
+            cursor.execute("SELECT count(*) FROM cves")
+            count = cursor.fetchone()[0]
             test_conn.close()
             
             # If valid, replace the original
             os.replace(temp_db, DB)
             size_mb = os.path.getsize(DB) / (1024 * 1024)
-            print(f"✅ Database ready ({size_mb:.1f} MB)")
+            print(f"✅ Database ready ({size_mb:.1f} MB) with {count:,} CVEs")
             
             # Optimize after download
             optimize_database_light()
