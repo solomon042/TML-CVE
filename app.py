@@ -779,7 +779,7 @@ def check_boms_and_send_alerts(new_cves):
             print(f"   📧 Sent {len(matches)} alerts for {bom['name']}")
 
 # ============================================================
-# SCHEDULER FOR DAILY UPDATES AND MONTHLY VACUUM
+# SCHEDULER FOR DAILY UPDATES AND MONTHLY VACUUM - FIXED
 # ============================================================
 
 def run_scheduler():
@@ -788,17 +788,26 @@ def run_scheduler():
         schedule.run_pending()
         time.sleep(60)
 
+def check_and_run_monthly_vacuum():
+    """Check if it's the 1st of the month and run VACUUM"""
+    today = datetime.now()
+    if today.day == 1:  # First day of month
+        print(f"📅 First day of month detected - running monthly VACUUM")
+        optimize_database_full()
+    else:
+        print(f"📅 Not first day of month (day {today.day}) - skipping VACUUM")
+
 # Daily CVE updates at 2:00 AM UTC
 schedule.every().day.at("02:00").do(fetch_new_cves_from_nvd)
 
-# Monthly VACUUM on the 1st of each month at 2:30 AM UTC
-schedule.every().month.at("02:30").do(optimize_database_full)
+# Check for monthly VACUUM every day at 2:30 AM
+schedule.every().day.at("02:30").do(check_and_run_monthly_vacuum)
 
 # Start scheduler
 scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
 scheduler_thread.start()
 print("⏰ Scheduler started — daily CVE update at 02:00 UTC")
-print("⏰ Monthly VACUUM scheduled for 1st of month at 02:30 UTC")
+print("⏰ Monthly VACUUM check daily at 02:30 UTC (runs only on 1st of month)")
 
 # ============================================================
 # RATE LIMITING
@@ -1568,7 +1577,7 @@ if __name__ == "__main__":
     print(f"🐘 PostgreSQL: {'Connected' if postgres_pool else 'Not connected'}")
     print(f"📋 BOMs:      {len(ENV_BOMS)} loaded from environment")
     print(f"⏰ Scheduler:  Daily updates at 02:00 UTC")
-    print(f"⏰ VACUUM:     Monthly on 1st at 02:30 UTC")
+    print(f"⏰ VACUUM:     Daily check at 02:30 UTC (runs on 1st of month)")
     print("=" * 55)
     
     port = int(os.environ.get('PORT', 5000))
