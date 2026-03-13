@@ -1144,7 +1144,7 @@ def extract_affected_companies(description: str) -> list:
     return found
 
 # ============================================================
-# API ROUTES - FIXED STATS ROUTE
+# API ROUTES - FIXED STATS ROUTE WITH NEW_7_DAYS
 # ============================================================
 
 @app.route("/stats")
@@ -1171,6 +1171,13 @@ def stats():
         cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score > 0 AND cvss_score < 4.0")
         low = cursor.fetchone()[0]
         
+        # Get new CVEs from last 7 days
+        cursor.execute("""
+            SELECT COUNT(*) FROM cves 
+            WHERE julianday('now') - julianday(published) <= 7
+        """)
+        new_7_days = cursor.fetchone()[0]
+        
         # Get AI count
         cursor.execute("SELECT COUNT(*) FROM cve_ai_analysis")
         ai_count = cursor.fetchone()[0]
@@ -1186,13 +1193,16 @@ def stats():
         except:
             pass
         
+        # Get last update time (from scheduler or current)
+        last_update = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+        
         conn.close()
         
         date_range_text = "No data"
         if oldest and newest:
             date_range_text = f"{oldest[:10]} – {newest[:10]}"
         
-        print(f"📊 Stats: Total={total}, Crit={critical}, High={high}, Med={medium}, Low={low}")
+        print(f"📊 Stats: Total={total}, Crit={critical}, High={high}, Med={medium}, Low={low}, New7={new_7_days}")
         
         return jsonify({
             "total_cves": total,
@@ -1200,10 +1210,12 @@ def stats():
             "high": high,
             "medium": medium,
             "low": low,
+            "new_7_days": new_7_days,
             "ai_enhanced": ai_count,
             "oldest_cve": oldest,
             "newest_cve": newest,
-            "date_range": date_range_text
+            "date_range": date_range_text,
+            "last_update": last_update
         })
     except Exception as e:
         print(f"❌ Stats error: {e}")
@@ -1213,10 +1225,12 @@ def stats():
             "high": 0,
             "medium": 0,
             "low": 0,
+            "new_7_days": 0,
             "ai_enhanced": 0,
             "oldest_cve": None,
             "newest_cve": None,
-            "date_range": "Error loading stats"
+            "date_range": "Error loading stats",
+            "last_update": None
         })
 
 @app.route("/keyword-stats")
