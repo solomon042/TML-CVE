@@ -30,6 +30,13 @@ from email.mime.multipart import MIMEMultipart
 app = Flask(__name__)
 
 # ============================================================
+# GLOBAL VARIABLES FOR NVD UPDATE
+# ============================================================
+_nvd_job = {"running": False, "progress": 0, "status": "idle",
+            "log": [], "success": None, "done": False}
+_nvd_lock = threading.Lock()
+
+# ============================================================
 # ENVIRONMENT CONFIGURATION
 # ============================================================
 
@@ -621,6 +628,214 @@ def send_bom_alert(email, bom_name, keywords, matches):
     """
     
     send_email_alert(email, subject, html)
+
+# ============================================================
+# NVD UPDATE BACKGROUND JOB
+# ============================================================
+
+def _run_nvd_update(user_key):
+    """Background thread: fetch CVEs from NVD and update the local DB."""
+    from datetime import datetime, timedelta, timezone
+    global _nvd_job
+
+    def _log(msg, progress=None):
+        with _nvd_lock:
+            _nvd_job["log"].append(msg)
+            if progress is not None:
+                _nvd_job["progress"] = progress
+            _nvd_job["status"] = msg[:120]
+        print(f"[NVD] {msg}")
+
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=180)
+        pub_from = cutoff.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+        pub_to = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+
+        req_headers = {"User-Agent": "CVE-Dashboard/1.0"}
+        if user_key:
+            req_headers["apiKey"] = user_key
+
+        start_index = 0
+        results_per = 2000
+        total_results = None
+        added = updated = 0
+
+        conn = sqlite3.connect(DB)
+        cursor = conn.cursor()
+
+        # Ensure schema has all needed columns
+        try:
+            cursor.execute("PRAGMA table_info(cves)")
+            existing = {row[1] for row in cursor.fetchall()}
+            for col in ["cve_id", "description", "cvss_score", "severity",
+                        "published", "last_modified", "references", "cwe_id"]:
+                if col not in existing:
+                    col_sql = '"references"' if col == "references" else col
+                    cursor.execute(f"ALTER TABLE cves ADD COLUMN {col_sql} TEXT")
+            conn.commit()
+        except Exception as ex:
+            _log(f"Schema note: {ex}")
+
+        _log("Connected — starting NVD fetch...", progress=5)
+
+        while True:
+            params = {
+                "pubStartDate": pub_from,
+                "pubEndDate": pub_to,
+                "startIndex": start_index,
+                "resultsPerPage": results_per,
+            }
+            prog = min(10 + int((start_index / max(total_results or 1, 1)) * 85), 94)
+            _log(f"Fetching records {start_index + 1}–{start_index + results_per}...", progress=prog)
+
+            try:
+                resp = requests.get(NVD_API_URL, params=params,
+                                    headers=req_headers, timeout=60)
+
+                if resp.status_code == 403:
+                    _log("NVD rate limit — get free API key at nvd.nist.gov")
+                    with _nvd_lock:
+                        _nvd_job.update({"done": True, "success": False,
+                            "status": "Rate limited — add free NVD API key"})
+                    conn.close()
+                    return
+
+                if resp.status_code == 404:
+                    _retry_404 = getattr(_run_nvd_update, "_retry_404", 0)
+                    _run_nvd_update._retry_404 = _retry_404 + 1
+                    if _run_nvd_update._retry_404 <= 3:
+                        wait = 30 * _run_nvd_update._retry_404
+                        _log(f"NVD returned 404 (attempt {_run_nvd_update._retry_404}/3) — waiting {wait}s then retrying...")
+                        time.sleep(wait)
+                        continue
+                    _run_nvd_update._retry_404 = 0
+                    _log("NVD API 404 after 3 retries — service may be down, try again in a few minutes")
+                    with _nvd_lock:
+                        _nvd_job.update({"done": True, "success": False,
+                            "status": "NVD API 404 after retries — try again in a few minutes"})
+                    conn.close()
+                    return
+
+                if resp.status_code != 200:
+                    msg = f"NVD HTTP {resp.status_code}: {resp.text[:80]}"
+                    _log(msg)
+                    with _nvd_lock:
+                        _nvd_job.update({"done": True, "success": False, "status": msg})
+                    conn.close()
+                    return
+
+                data_json = resp.json()
+                total_results = data_json.get("totalResults", 0)
+                vuln_list = data_json.get("vulnerabilities", [])
+
+                if total_results == 0:
+                    _log("No new CVEs in date range.", progress=99)
+                    break
+
+                _log(f"Total: {total_results:,}  |  Batch: {len(vuln_list)}")
+
+                for item in vuln_list:
+                    cve_data = item.get("cve", {})
+                    cve_id = cve_data.get("id", "")
+                    if not cve_id:
+                        continue
+
+                    descs = cve_data.get("descriptions", [])
+                    desc = next((d["value"] for d in descs if d.get("lang") == "en"), "")
+
+                    metrics = cve_data.get("metrics", {})
+                    cvss = None
+                    for mk in ["cvssMetricV31", "cvssMetricV30", "cvssMetricV2"]:
+                        if mk in metrics and metrics[mk]:
+                            try:
+                                cvss = float(metrics[mk][0]["cvssData"]["baseScore"])
+                            except Exception:
+                                pass
+                            break
+
+                    published = cve_data.get("published", "")[:10]
+                    last_modified = cve_data.get("lastModified", "")[:10]
+
+                    cwe_id = ""
+                    for w in cve_data.get("weaknesses", []):
+                        for d in w.get("description", []):
+                            if d.get("lang") == "en":
+                                cwe_id = d.get("value", "")
+                                break
+
+                    refs = [r.get("url", "") for r in cve_data.get("references", [])[:5]]
+
+                    cursor.execute("SELECT cve_id FROM cves WHERE cve_id=?", (cve_id,))
+                    if cursor.fetchone():
+                        cursor.execute("""
+                            UPDATE cves SET description=?,cvss_score=?,published=?,
+                            last_modified=?,cwe_id=?,"references"=? WHERE cve_id=?
+                        """, (desc, cvss, published, last_modified, cwe_id, json.dumps(refs), cve_id))
+                        updated += 1
+                    else:
+                        cursor.execute("""
+                            INSERT INTO cves
+                              (cve_id,description,cvss_score,published,
+                               last_modified,cwe_id,"references")
+                            VALUES (?,?,?,?,?,?,?)
+                        """, (cve_id, desc, cvss, published, last_modified, cwe_id, json.dumps(refs)))
+                        added += 1
+
+                conn.commit()
+                start_index += results_per
+                if start_index >= total_results:
+                    break
+                time.sleep(0.7 if user_key else 6)
+
+            except Exception as ex:
+                _log(f"Fetch error: {ex}")
+                time.sleep(5)
+                continue
+
+        conn.close()
+        msg = f"Done — {added:,} added, {updated:,} updated (last 180 days)"
+        _log(f"✅ {msg}", progress=100)
+        with _nvd_lock:
+            _nvd_job.update({"done": True, "success": True, "status": msg,
+                             "running": False})
+
+    except Exception as ex:
+        print(f"[NVD] Fatal: {ex}")
+        with _nvd_lock:
+            _nvd_job.update({"done": True, "success": False,
+                             "status": f"Fatal error: {ex}", "running": False})
+
+# ============================================================
+# NVD API ROUTES
+# ============================================================
+
+@app.route("/api/nvd-update", methods=["POST"])
+def api_nvd_update():
+    """Start NVD update in background thread."""
+    global _nvd_job
+    with _nvd_lock:
+        if _nvd_job.get("running"):
+            return jsonify({"ok": False, "message": "Update already running"}), 409
+
+        body = request.get_json(silent=True) or {}
+        user_key = (body.get("nvd_api_key") or "").strip() or NVD_API_KEY
+
+        _nvd_job = {"running": True, "progress": 0, "status": "Starting...",
+                    "log": [], "success": None, "done": False}
+
+    t = threading.Thread(target=_run_nvd_update, args=(user_key,), daemon=True)
+    t.start()
+    return jsonify({"ok": True, "message": "Update started"})
+
+@app.route("/api/nvd-status")
+def api_nvd_status():
+    """Poll endpoint: returns current NVD update job status."""
+    with _nvd_lock:
+        job = dict(_nvd_job)
+        job["log"] = job["log"][-50:]
+        if job.get("done"):
+            _nvd_job["running"] = False
+    return jsonify(job)
 
 # ============================================================
 # DAILY CVE UPDATE FUNCTION
@@ -1595,6 +1810,16 @@ def _rule_based_remediation(description: str, cve_id: str = "") -> str:
     if "patch" in d or "fix" in d:
         return "Apply the available security patch as soon as possible."
     return f"Check https://nvd.nist.gov/vuln/detail/{cve_id} for vendor advisories."
+
+# ============================================================
+# ERROR HANDLERS
+# ============================================================
+
+@app.errorhandler(404)
+def not_found_error(error):  return "Page not found", 404
+
+@app.errorhandler(500)
+def internal_error(error):   return "Internal server error", 500
 
 # ============================================================
 # STARTUP
