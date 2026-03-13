@@ -128,47 +128,6 @@
         .sev-pill.med  { background: #cffafe; color: #164e63; }
         .sev-pill.low  { background: #f3f4f6; color: #374151; }
 
-        /* ── RECENT ALERTS SECTION ── */
-        .alerts-section {
-            background: white; border: 1px solid var(--border);
-            border-radius: 10px; padding: 14px 18px;
-            margin-bottom: 12px;
-        }
-        .alerts-section .section-title {
-            font-size: .85rem; font-weight: 700;
-            color: var(--text); display: flex; align-items: center; gap: 7px;
-            margin-bottom: 10px;
-        }
-        .alerts-section .section-title i { color: var(--primary); }
-        .alert-row {
-            display: flex; align-items: center; gap: 10px;
-            padding: 7px 0; border-bottom: 1px solid var(--border);
-            font-size: .78rem; flex-wrap: wrap;
-        }
-        .alert-row:last-child { border-bottom: none; padding-bottom: 0; }
-        .alert-cve-id {
-            font-family: var(--mono); font-weight: 700;
-            color: var(--primary); text-decoration: none; min-width: 120px;
-        }
-        .alert-cve-id:hover { text-decoration: underline; }
-        .alert-keyword {
-            background: #fefce8; color: #713f12;
-            border: 1px solid #fde68a; padding: 2px 7px;
-            border-radius: 8px; font-size: .72rem; font-weight: 600;
-        }
-        .alert-bom {
-            background: #eff6ff; color: #1d4ed8;
-            border: 1px solid #bfdbfe; padding: 2px 7px;
-            border-radius: 8px; font-size: .72rem; font-weight: 500;
-        }
-        .alert-email { color: var(--text-muted); font-size: .72rem; }
-        .alert-time  { color: var(--text-muted); font-size: .7rem;
-                       font-family: var(--mono); margin-left: auto; }
-        .alerts-empty {
-            text-align: center; color: var(--text-muted);
-            padding: 18px 0; font-size: .83rem;
-        }
-
         /* ── SEARCH PANEL ── */
         .search-panel {
             background: white; border: 1px solid var(--border);
@@ -1608,45 +1567,6 @@ async function loadStats() {
             if (card) card.style.borderLeft = '';
         }
     } catch(e) { console.warn('keyword-stats error', e); }
-}
-
-// ═══════════════════════════════════════════════════════
-//  RECENT ALERTS — fetch /api/alerts/recent
-// ═══════════════════════════════════════════════════════
-async function loadAlerts() {
-    const body  = document.getElementById('alertsBody');
-    const badge = document.getElementById('alertsBadge');
-    try {
-        const r = await fetch('/api/alerts/recent');
-        if (!r.ok) throw new Error('non-200');
-        const alerts = await r.json();
-
-        if (!alerts || alerts.length === 0) {
-            body.innerHTML = '<div class="alerts-empty"><i class="bi bi-check-circle text-success me-2"></i>No alerts in last 24 hours</div>';
-            return;
-        }
-
-        badge.textContent   = alerts.length;
-        badge.style.display = 'inline';
-
-        body.innerHTML = alerts.map(a => {
-            const time = a.sent_at
-                ? new Date(a.sent_at).toLocaleString('en-US',
-                    {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
-                : '';
-            return `
-            <div class="alert-row">
-                <a href="https://nvd.nist.gov/vuln/detail/${esc(a.cve_id)}"
-                   target="_blank" class="alert-cve-id">${esc(a.cve_id)}</a>
-                <span class="alert-keyword">${esc(a.keyword || '')}</span>
-                <span class="alert-bom">${esc(a.bom_name || '')}</span>
-                <span class="alert-email"><i class="bi bi-envelope me-1"></i>${esc(a.email || '')}</span>
-                <span class="alert-time">${time}</span>
-            </div>`;
-        }).join('');
-    } catch(e) {
-        body.innerHTML = '<div class="alerts-empty text-muted"><i class="bi bi-wifi-off me-2"></i>Could not load alerts (PostgreSQL may not be connected)</div>';
-    }
 }
 
 // ═══════════════════════════════════════════════════════
