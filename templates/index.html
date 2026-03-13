@@ -1539,16 +1539,14 @@ async function loadStats() {
         const d = await r.json();
 
         // Date range card
-        if (d.oldest_cve && d.newest_cve) {
-            const fmt = dt => new Date(dt).toLocaleDateString('en-US',
-                { year:'numeric', month:'2-digit', day:'2-digit' })
-                .replace(/(\d+)\/(\d+)\/(\d+)/, '$3-$1-$2');
-            document.getElementById('dateRange').textContent =
-                `${d.oldest_cve.slice(0,10)} – ${d.newest_cve.slice(0,10)}`;
+        const dateEl = document.getElementById('dateRange');
+        if (dateEl && d.oldest_cve && d.newest_cve) {
+            dateEl.textContent = `${d.oldest_cve.slice(0,10)} – ${d.newest_cve.slice(0,10)}`;
         }
 
         // NEW (7 Days) card
-        document.getElementById('new7Days').textContent = (d.new_7_days || 0).toLocaleString();
+        const newEl = document.getElementById('new7Days');
+        if (newEl) newEl.textContent = (d.new_7_days || 0).toLocaleString();
 
         // AI count
         const aiEl = document.getElementById('aiCount');
@@ -1556,9 +1554,9 @@ async function loadStats() {
 
         // Update banner
         const banner = document.getElementById('bannerText');
-        if (d.last_update) {
+        if (banner && d.last_update) {
             banner.textContent = `Daily updates run at 2:00 AM UTC. Last update: ${d.last_update}`;
-        } else {
+        } else if (banner) {
             banner.textContent = 'Daily updates run at 2:00 AM UTC. Last update: never (run one now)';
         }
     } catch(e) { console.warn('stats error', e); }
@@ -1574,23 +1572,39 @@ async function loadStats() {
         if (!r.ok) return;
         const d = await r.json();
 
-        document.getElementById('totalCves').textContent = (d.total    || 0).toLocaleString();
-        document.getElementById('cntCrit').textContent   = (d.critical || 0).toLocaleString();
-        document.getElementById('cntHigh').textContent   = (d.high     || 0).toLocaleString();
-        document.getElementById('cntMed').textContent    = (d.medium   || 0).toLocaleString();
-        document.getElementById('cntLow').textContent    = (d.low      || 0).toLocaleString();
+        // Update total CVEs
+        const totalEl = document.getElementById('totalCves');
+        if (totalEl) totalEl.textContent = (d.total || 0).toLocaleString();
 
+        // Update severity counts - using correct IDs
+        const critEl = document.getElementById('cntCrit');
+        if (critEl) critEl.textContent = (d.critical || 0).toLocaleString();
+
+        const highEl = document.getElementById('cntHigh');
+        if (highEl) highEl.textContent = (d.high || 0).toLocaleString();
+
+        const medEl = document.getElementById('cntMed');
+        if (medEl) medEl.textContent = (d.medium || 0).toLocaleString();
+
+        const lowEl = document.getElementById('cntLow');
+        if (lowEl) lowEl.textContent = (d.low || 0).toLocaleString();
+
+        // Update context label
         const ctx  = document.getElementById('statsCtx');
         const card = document.getElementById('totalCard');
         if (d.filtered && kw) {
             const kwList = kw.split(',').map(k=>k.trim()).filter(Boolean);
-            ctx.textContent   = kwList.length === 1 ? `for "${kwList[0]}"` : `for ${kwList.length} keywords`;
-            ctx.style.display = 'inline';
-            document.getElementById('totalLabel').textContent = 'Matching CVEs';
+            if (ctx) {
+                ctx.textContent = kwList.length === 1 ? `for "${kwList[0]}"` : `for ${kwList.length} keywords`;
+                ctx.style.display = 'inline';
+            }
+            const totalLabel = document.getElementById('totalLabel');
+            if (totalLabel) totalLabel.textContent = 'Matching CVEs';
             if (card) card.style.borderLeft = '3px solid #059669';
         } else {
-            ctx.style.display = 'none';
-            document.getElementById('totalLabel').textContent = 'Total CVEs';
+            if (ctx) ctx.style.display = 'none';
+            const totalLabel = document.getElementById('totalLabel');
+            if (totalLabel) totalLabel.textContent = 'Total CVEs';
             if (card) card.style.borderLeft = '';
         }
     } catch(e) { console.warn('keyword-stats error', e); }
@@ -1684,7 +1698,8 @@ function filterInd(ind, btn) {
         r.classList.toggle('hidden-row', !show);
         if (show) vis++;
     });
-    document.getElementById('visibleCount').textContent = vis;
+    const countEl = document.getElementById('visibleCount');
+    if (countEl) countEl.textContent = vis;
     const note = document.getElementById('indNote');
     note.style.display = ind === 'all' ? 'none' : 'inline';
     if (ind !== 'all') note.textContent = `Showing ${vis} CVEs`;
