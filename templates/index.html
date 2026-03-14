@@ -625,7 +625,7 @@
 
 <div class="app-body">
 
-    <!-- STATS CARDS - CRITICAL: IDs match JavaScript -->
+    <!-- STATS CARDS - FIXED IDs -->
     <div class="stat-strip">
         <div class="stat-card">
             <div class="stat-icon blue"><i class="bi bi-calendar-range"></i></div>
@@ -857,7 +857,7 @@
         {% endif %}
     </div>
 
-    <!-- CVEs TABLE -->
+    <!-- CVEs TABLE - FULL DESIGN WITH ALL COLUMNS -->
     {% if cves and cves|length > 0 %}
     <div class="table-wrap">
         <div class="table-scroll">
@@ -869,44 +869,158 @@
                         <th class="col-sev">Severity</th>
                         <th class="col-date">Published</th>
                         <th class="col-desc">Description</th>
+                        {% if use_ai %}<th class="col-ai">AI Summary</th>{% endif %}
+                        <th class="col-ver">Affected Ver.</th>
+                        <th class="col-status">Fix Status</th>
+                        <th class="col-rem">Remediation</th>
+                        <th class="col-ind">Industry</th>
+                        <th class="col-comp">Companies</th>
+                        <th class="col-match">Matched</th>
                     </tr>
                 </thead>
                 <tbody id="cveTableBody">
                 {% for cve in cves %}
-                {% set dl = (cve.description or '')|lower %}
-                {% set is_auto = 'automotive' in dl or 'vehicle' in dl or 'car' in dl %}
-                {% set is_it = 'microsoft' in dl or 'windows' in dl or 'linux' in dl or 'apple' in dl %}
-                {% set is_iot = 'iot' in dl or 'router' in dl or 'tenda' in dl or 'tp-link' in dl %}
-                {% set is_ind = 'scada' in dl or 'plc' in dl or 'industrial' in dl %}
-                {% set is_tel = 'telecom' in dl or '5g' in dl or 'lte' in dl %}
-                {% set is_med = 'medical' in dl or 'hospital' in dl or 'patient' in dl %}
-                {% set inds = [] %}
-                {% if is_auto %}{% set _ = inds.append('automotive') %}{% endif %}
-                {% if is_it %}{% set _ = inds.append('it') %}{% endif %}
-                {% if is_iot %}{% set _ = inds.append('iot') %}{% endif %}
-                {% if is_ind %}{% set _ = inds.append('industrial') %}{% endif %}
-                {% if is_tel %}{% set _ = inds.append('telecom') %}{% endif %}
-                {% if is_med %}{% set _ = inds.append('medical') %}{% endif %}
+                {%- set dl = (cve.description or '')|lower -%}
+                {%- set cl = (cve.affected_companies or [])|join(' ')|lower -%}
+                {%- set cb = dl + ' ' + cl -%}
+                {%- set is_auto = ('automotive' in cb or 'vehicle' in cb or 'infotainment' in cb or 'ecu' in cb or 'can bus' in cb or 'tesla' in cb or 'nissan' in cb or 'ford' in cb or 'toyota' in cb or 'honda' in cb or 'harman' in cb or 'bosch' in cb or 'alps alpine' in cb) -%}
+                {%- set is_it   = ('microsoft' in cb or 'windows' in cb or 'linux' in cb or 'apple' in cb or 'google' in cb or 'android' in cb or 'apache' in cb or 'nginx' in cb or 'adobe' in cb or 'oracle' in cb or 'java' in cb or 'python' in cb or 'wordpress' in cb or 'php' in cb or 'sql' in cb or 'kubernetes' in cb or 'docker' in cb or 'vmware' in cb or 'ubuntu' in cb) -%}
+                {%- set is_iot  = ('iot' in cb or 'router' in cb or 'firmware' in cb or 'tenda' in cb or 'tp-link' in cb or 'd-link' in cb or 'netgear' in cb or 'asus' in cb or 'smart home' in cb or 'zigbee' in cb or 'bluetooth' in cb or 'wifi' in cb or 'wi-fi' in cb or 'embedded' in cb or 'camera' in cb or 'nvr' in cb) -%}
+                {%- set is_ind  = ('scada' in cb or 'plc' in cb or 'ics' in cb or 'industrial' in cb or 'siemens' in cb or 'schneider' in cb or 'rockwell' in cb or 'honeywell' in cb or 'modbus' in cb or 'hmi' in cb) -%}
+                {%- set is_tel  = ('telecom' in cb or '5g' in cb or '4g' in cb or 'lte' in cb or 'qualcomm' in cb or 'mediatek' in cb or 'baseband' in cb or 'voip' in cb or 'cisco' in cb or 'juniper' in cb) -%}
+                {%- set is_med  = ('medical' in cb or 'hospital' in cb or 'patient' in cb or 'healthcare' in cb or 'hl7' in cb or 'dicom' in cb or 'pacemaker' in cb) -%}
+                {%- set inds = [] -%}
+                {%- if is_auto -%}{%- set _ = inds.append('automotive') -%}{%- endif -%}
+                {%- if is_it   -%}{%- set _ = inds.append('it')         -%}{%- endif -%}
+                {%- if is_iot  -%}{%- set _ = inds.append('iot')        -%}{%- endif -%}
+                {%- if is_ind  -%}{%- set _ = inds.append('industrial') -%}{%- endif -%}
+                {%- if is_tel  -%}{%- set _ = inds.append('telecom')    -%}{%- endif -%}
+                {%- if is_med  -%}{%- set _ = inds.append('medical')    -%}{%- endif -%}
 
                 <tr data-industries="{{ inds|join(',') if inds else 'unknown' }}" data-cve-id="{{ cve.cve_id }}">
+                    <!-- CVE ID -->
                     <td class="col-id">
-                        <a href="https://nvd.nist.gov/vuln/detail/{{ cve.cve_id }}" target="_blank" class="cve-link">{{ cve.cve_id }}</a>
+                        <a href="https://nvd.nist.gov/vuln/detail/{{ cve.cve_id }}"
+                           target="_blank" class="cve-link">{{ cve.cve_id }}</a>
                         {% if cve.get('is_new') %}<span class="new-badge">NEW</span>{% endif %}
+                        {% if inds %}
+                        <div style="margin-top:2px;">
+                            {% for ind in inds[:2] %}
+                            <span class="ind-tag {{ ind }}" style="font-size:.6rem;padding:1px 5px;">{{ ind }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
                     </td>
+                    <!-- CVSS -->
                     <td class="col-cvss" style="text-align:center;">
                         {% if cve.cvss_score %}
-                        <span class="cvss-val {% if cve.cvss_score|float>=9 %}crit{% elif cve.cvss_score|float>=7 %}high{% elif cve.cvss_score|float>=4 %}med{% else %}low{% endif %}">
+                        <span class="cvss-val {%- if cve.cvss_score|float>=9 %} crit{%- elif cve.cvss_score|float>=7 %} high{%- elif cve.cvss_score|float>=4 %} med{%- else %} low{%- endif %}">
                             {{ "%.1f"|format(cve.cvss_score|float) }}
                         </span>
-                        {% else %}N/A{% endif %}
+                        {% else %}<span style="color:#9ca3af;">N/A</span>{% endif %}
                     </td>
+                    <!-- Severity -->
                     <td class="col-sev">
                         <span class="sev-badge {{ cve.severity or 'Unknown' }}">{{ cve.severity or 'Unknown' }}</span>
                     </td>
-                    <td class="col-date">{{ cve.published_date[:10] if cve.published_date else 'N/A' }}</td>
+                    <!-- Date -->
+                    <td class="col-date" style="color:var(--text-muted);font-family:var(--mono);font-size:.7rem;">
+                        {{ cve.published_date[:10] if cve.published_date else 'N/A' }}
+                    </td>
+                    <!-- Description -->
                     <td class="col-desc">
                         <div class="cell-scroll">
-                            <div class="desc-box">{{ cve.description[:200] + '...' if cve.description and cve.description|length > 200 else cve.description }}</div>
+                            <div class="desc-box">{{ cve.description[:250] + '...' if cve.description and cve.description|length > 250 else cve.description }}</div>
+                        </div>
+                    </td>
+                    {% if use_ai %}
+                    <!-- AI Summary (lazy) -->
+                    <td class="col-ai" id="ai-sum-{{ cve.cve_id|replace('-','_') }}">
+                        <div class="cell-scroll">
+                            {%- set bad = ['information not available','no ai summary available','ai analysis unavailable',''] -%}
+                            {% if cve.ai_summary and cve.ai_summary|lower not in bad %}
+                            <div class="ai-box"><i class="bi bi-robot text-primary me-1" style="font-size:.68rem;"></i>{{ cve.ai_summary }}</div>
+                            {% else %}
+                            <div class="ai-box pending ai-pending">
+                                <span class="skeleton-line"></span>
+                                <span class="skeleton-line" style="width:65%"></span>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </td>
+                    {% endif %}
+                    <!-- Affected Version (lazy) -->
+                    <td class="col-ver" style="text-align:center;" id="ai-ver-{{ cve.cve_id|replace('-','_') }}">
+                        {% if cve.affected_version and cve.affected_version not in ['Unknown','','None'] %}
+                        <span class="ver-badge">{{ cve.affected_version }}</span>
+                        {% else %}
+                        <span class="text-muted ai-pending" style="font-size:.7rem;">—</span>
+                        {% endif %}
+                    </td>
+                    <!-- Fix Status (lazy) -->
+                    <td class="col-status" id="ai-fix-{{ cve.cve_id|replace('-','_') }}">
+                        {%- set fs = cve.fix_status or 'Unknown' -%}
+                        {%- set fsl = fs|lower -%}
+                        {% if fsl in ['fix available','fixed','fully fixed'] %}
+                        <span class="fix-badge available"><i class="bi bi-check-circle-fill"></i>{{ fs }}</span>
+                        {% elif fsl in ['workaround available','partially fixed'] %}
+                        <span class="fix-badge workaround"><i class="bi bi-exclamation-triangle-fill"></i>{{ fs }}</span>
+                        {% elif fsl in ['not fixed','pending','check needed'] %}
+                        <span class="fix-badge notfixed"><i class="bi bi-x-circle-fill"></i>{{ fs }}</span>
+                        {% else %}
+                        <span class="fix-badge unknown ai-pending"><i class="bi bi-question-circle"></i>{{ fs }}</span>
+                        {% endif %}
+                        {% if cve.fixed_version and cve.fixed_version not in ['Unknown','','None'] %}
+                        <span class="fixed-in"><i class="bi bi-tag me-1"></i>{{ cve.fixed_version }}</span>
+                        {% endif %}
+                    </td>
+                    <!-- Remediation (lazy) -->
+                    <td class="col-rem" id="ai-rem-{{ cve.cve_id|replace('-','_') }}">
+                        <div class="cell-scroll">
+                            {%- set badr = ['information not available','no remediation information available','no remediation info yet',''] -%}
+                            {% if cve.remediation and cve.remediation|lower not in badr %}
+                            <div class="rem-box"><i class="bi bi-shield-check text-success me-1" style="font-size:.68rem;"></i>{{ cve.remediation }}</div>
+                            {% else %}
+                            <div class="rem-box pending ai-pending">
+                                <span class="skeleton-line"></span>
+                                <span class="skeleton-line" style="width:55%"></span>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </td>
+                    <!-- Industry -->
+                    <td class="col-ind">
+                        <div class="cell-scroll" style="max-height:75px;">
+                            {% if inds %}
+                                {% for ind in inds %}
+                                <span class="ind-tag {{ ind }}">
+                                    {%- if ind=='automotive' %}🚗{%- elif ind=='it' %}💻{%- elif ind=='iot' %}📡{%- elif ind=='industrial' %}🏭{%- elif ind=='telecom' %}📱{%- elif ind=='medical' %}🏥{%- endif %}
+                                    {{ ind|title }}
+                                </span>
+                                {% endfor %}
+                            {% else %}<span style="color:#9ca3af;">—</span>{% endif %}
+                        </div>
+                    </td>
+                    <!-- Companies -->
+                    <td class="col-comp">
+                        <div class="cell-scroll" style="max-height:75px;">
+                            {% if cve.affected_companies and cve.affected_companies|length > 0 %}
+                                {% for c in cve.affected_companies %}
+                                    {% if c and c not in ['[]','Unknown','None',''] %}
+                                    <span class="comp-tag">{{ c }}</span>
+                                    {% endif %}
+                                {% endfor %}
+                            {% else %}<span style="color:#9ca3af;">—</span>{% endif %}
+                        </div>
+                    </td>
+                    <!-- Matched -->
+                    <td class="col-match">
+                        <div class="cell-scroll" style="max-height:75px;">
+                            {% if cve.matched_keywords and cve.matched_keywords|length > 0 %}
+                                {% for kw in cve.matched_keywords %}
+                                <span class="match-tag">{{ kw }}</span>
+                                {% endfor %}
+                            {% else %}<span style="color:#9ca3af;">—</span>{% endif %}
                         </div>
                     </td>
                 </tr>
@@ -915,6 +1029,35 @@
             </table>
         </div>
     </div>
+
+    <!-- Pagination -->
+    {% if total_pages and total_pages > 1 %}
+    <nav class="mt-3">
+        <ul class="pagination justify-content-center">
+            <li class="page-item {% if page==1 %}disabled{% endif %}">
+                <a class="page-link"
+                   href="?page={{ page-1 }}&kw={{ request.args.get('kw','') }}&sv={{ request.args.get('sv','') }}&use_ai={{ 'true' if use_ai else 'false' }}&tab={{ request.args.get('tab','single') }}">
+                    <i class="bi bi-chevron-left"></i>
+                </a>
+            </li>
+            {% for p in range(1, total_pages+1) %}
+                {% if p >= page-2 and p <= page+2 %}
+                <li class="page-item {% if p==page %}active{% endif %}">
+                    <a class="page-link"
+                       href="?page={{ p }}&kw={{ request.args.get('kw','') }}&sv={{ request.args.get('sv','') }}&use_ai={{ 'true' if use_ai else 'false' }}&tab={{ request.args.get('tab','single') }}">{{ p }}</a>
+                </li>
+                {% endif %}
+            {% endfor %}
+            <li class="page-item {% if page==total_pages %}disabled{% endif %}">
+                <a class="page-link"
+                   href="?page={{ page+1 }}&kw={{ request.args.get('kw','') }}&sv={{ request.args.get('sv','') }}&use_ai={{ 'true' if use_ai else 'false' }}&tab={{ request.args.get('tab','single') }}">
+                    <i class="bi bi-chevron-right"></i>
+                </a>
+            </li>
+        </ul>
+    </nav>
+    {% endif %}
+
     {% else %}
     <div class="empty-state">
         <i class="bi bi-inbox d-block mb-3"></i>
@@ -939,7 +1082,7 @@ const PAGE_KEYWORDS = {{ active_keywords | tojson }};
 const AI_ON = {{ 'true' if use_ai else 'false' }};
 
 // ═══════════════════════════════════════════════════════
-//  STATS — FIXED VERSION
+//  STATS - FIXED VERSION
 // ═══════════════════════════════════════════════════════
 async function loadStats() {
     try {
