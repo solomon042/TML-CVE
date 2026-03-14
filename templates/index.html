@@ -1196,26 +1196,52 @@ function filterInd(ind, btn) {
     }
 }
 
-// ═══════════════════════════════════════════════════════
-//  MANUAL UPDATE
+//  ═══════════════════════════════════════════════════════
+//  MANUAL UPDATE — FIXED (actually calls /update-cve)
 // ═══════════════════════════════════════════════════════
 async function triggerUpdate() {
-    const btn = document.getElementById('updateBtn');
-    const icon = document.getElementById('updateIcon');
+    const btn        = document.getElementById('updateBtn');
+    const icon       = document.getElementById('updateIcon');
     const bannerText = document.getElementById('bannerText');
-    
+    const bannerBtn  = document.getElementById('bannerRefreshBtn');
+
+    if (btn.disabled) return;
+
     btn.disabled = true;
     icon.className = 'bi bi-arrow-clockwise';
     icon.style.animation = 'spin .8s linear infinite';
-    bannerText.textContent = 'Update started… will refresh in 15s';
-    
-    setTimeout(() => {
-        btn.disabled = false;
-        icon.className = 'bi bi-cloud-arrow-down';
-        icon.style.animation = '';
-        loadStats();
-        bannerText.textContent = 'Update complete. Stats refreshed.';
-    }, 15000);
+    if (bannerBtn) bannerBtn.classList.add('spinning');
+    bannerText.textContent = 'Fetching new CVEs from NVD… this may take 1–2 minutes';
+
+    try {
+        const r = await fetch('/update-cve', {
+            method:      'POST',
+            credentials: 'include',
+            headers:     { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body:        JSON.stringify({ csrf_token: '{{ csrf_token }}' }),
+        });
+
+        if (r.ok) {
+            bannerText.textContent = 'Update running in background — stats refresh in 15s…';
+            setTimeout(async () => {
+                await loadStats();
+                bannerText.textContent = 'Update complete. Stats refreshed.';
+            }, 15000);
+        } else {
+            const d = await r.json().catch(() => ({}));
+            bannerText.textContent = '❌ Update failed: ' + (d.message || `HTTP ${r.status}`);
+        }
+    } catch(e) {
+        bannerText.textContent = '❌ Network error — check /api/nvd-status';
+        console.error('Update error:', e);
+    } finally {
+        setTimeout(() => {
+            btn.disabled = false;
+            icon.className = 'bi bi-cloud-arrow-down';
+            icon.style.animation = '';
+            if (bannerBtn) bannerBtn.classList.remove('spinning');
+        }, 16000);
+    }
 }
 
 // ═══════════════════════════════════════════════════════
