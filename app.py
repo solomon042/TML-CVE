@@ -114,18 +114,17 @@ def load_boms_from_env():
 ENV_BOMS = load_boms_from_env()
 
 # ============================================================
-# DOWNLOAD DATABASE FROM GITHUB - FIXED VERSION
+# DOWNLOAD DATABASE FROM GITHUB
 # ============================================================
 
 def download_cve_from_github():
-    """Download CVE database from GitHub Releases - with improved validation"""
+    """Download CVE database from GitHub Releases"""
     
     # Check if file exists and is valid
     if os.path.exists(DB):
         file_size = os.path.getsize(DB)
         
-        # 1. Check if file is too small (likely empty or corrupted)
-        if file_size < 1024 * 1024:  # Less than 1MB? Definitely not a real CVE database.
+        if file_size < 1024 * 1024:  # Less than 1MB
             print(f"⚠️ Existing database is too small ({file_size} bytes). Deleting and re-downloading.")
             try:
                 os.remove(DB)
@@ -133,10 +132,8 @@ def download_cve_from_github():
             except OSError as e:
                 print(f"⚠️ Could not delete file: {e}")
         else:
-            # File size seems plausible, now try to open it as SQLite
             try:
                 test_conn = sqlite3.connect(DB)
-                # Also check if the 'cves' table exists
                 cursor = test_conn.cursor()
                 cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cves'")
                 if cursor.fetchone() is None:
@@ -147,9 +144,6 @@ def download_cve_from_github():
                 test_conn.close()
                 size_mb = file_size / (1024 * 1024)
                 print(f"✅ Valid database exists ({size_mb:.1f} MB) with {count:,} CVEs")
-                
-                # Run quick optimization
-                optimize_database_light()
                 return True
             except Exception as e:
                 print(f"⚠️ Existing database is corrupted or invalid, deleting: {e}")
@@ -159,7 +153,6 @@ def download_cve_from_github():
                 except OSError as rm_err:
                     print(f"⚠️ Could not delete corrupted file: {rm_err}")
     
-    # Download to temporary file first
     download_url = f"https://github.com/{GITHUB_REPO}/releases/download/{GITHUB_TAG}/{GITHUB_ASSET}"
     print(f"📥 Downloading from GitHub: {download_url}")
     
@@ -196,13 +189,9 @@ def download_cve_from_github():
             count = cursor.fetchone()[0]
             test_conn.close()
             
-            # If valid, replace the original
             os.replace(temp_db, DB)
             size_mb = os.path.getsize(DB) / (1024 * 1024)
             print(f"✅ Database ready ({size_mb:.1f} MB) with {count:,} CVEs")
-            
-            # Optimize after download
-            optimize_database_light()
             return True
         except Exception as e:
             print(f"❌ Downloaded file verification failed: {e}")
@@ -221,10 +210,9 @@ def download_cve_from_github():
 # ============================================================
 
 def optimize_database_light():
-    """Lightweight optimization - run after downloads"""
+    """Lightweight optimization"""
     try:
         conn = sqlite3.connect(DB)
-        # Set optimal pragmas
         conn.execute("PRAGMA auto_vacuum = FULL")
         conn.execute("PRAGMA page_size = 4096")
         conn.execute("PRAGMA cache_size = -2000")
@@ -233,76 +221,26 @@ def optimize_database_light():
         conn.execute("PRAGMA journal_mode = WAL")
         conn.commit()
         conn.close()
-        print("✅ Database optimized with optimal settings")
         return True
     except Exception as e:
         print(f"⚠️ Light optimization failed: {e}")
         return False
 
 def optimize_database_full():
-    """Full VACUUM optimization - run monthly"""
+    """Full VACUUM optimization"""
     try:
         before = os.path.getsize(DB) / (1024 * 1024)
         print(f"🔄 Monthly VACUUM starting... Current size: {before:.1f} MB")
         
         conn = sqlite3.connect(DB)
-        
-        # Get free space info
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA freelist_count")
-        free_pages = cursor.fetchone()[0]
-        page_size = conn.execute("PRAGMA page_size").fetchone()[0]
-        free_space = free_pages * page_size / (1024 * 1024)
-        
-        if free_pages > 0:
-            print(f"   Free pages: {free_pages} (~{free_space:.1f} MB)")
-        
-        # Run VACUUM
-        print("   Running VACUUM (may take a few minutes)...")
         conn.execute("VACUUM")
-        
-        # Rebuild indexes
         conn.execute("REINDEX")
-        
-        # Update statistics
         conn.execute("ANALYZE")
-        
         conn.close()
         
         after = os.path.getsize(DB) / (1024 * 1024)
         saved = before - after
-        percent = (saved / before * 100) if before > 0 else 0
-        
-        print(f"✅ VACUUM complete!")
-        print(f"   Before: {before:.1f} MB")
-        print(f"   After:  {after:.1f} MB")
-        print(f"   Saved:  {saved:.1f} MB ({percent:.1f}%)")
-        
-        # Log to PostgreSQL if available
-        if postgres_pool:
-            try:
-                conn = postgres_pool.getconn()
-                cur = conn.cursor()
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS maintenance_log (
-                        id SERIAL PRIMARY KEY,
-                        action TEXT,
-                        before_size REAL,
-                        after_size REAL,
-                        saved REAL,
-                        run_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-                cur.execute("""
-                    INSERT INTO maintenance_log (action, before_size, after_size, saved)
-                    VALUES (%s, %s, %s, %s)
-                """, ('VACUUM', before, after, saved))
-                conn.commit()
-                cur.close()
-                postgres_pool.putconn(conn)
-            except Exception as e:
-                print(f"   ⚠️ Could not log to PostgreSQL: {e}")
-        
+        print(f"✅ VACUUM complete! Saved {saved:.1f} MB")
         return True
     except Exception as e:
         print(f"⚠️ VACUUM failed: {e}")
@@ -325,11 +263,9 @@ def init_postgres():
         postgres_pool = psycopg2.pool.SimpleConnectionPool(1, 20, DATABASE_URL)
         print("✅ PostgreSQL connection pool created")
         
-        # Create all required tables with IF NOT EXISTS
         conn = postgres_pool.getconn()
         cur = conn.cursor()
         
-        # AI generations table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS ai_generations (
                 id SERIAL PRIMARY KEY,
@@ -347,7 +283,6 @@ def init_postgres():
             )
         """)
         
-        # CVE tracking table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS cve_tracking (
                 cve_id TEXT PRIMARY KEY,
@@ -362,7 +297,6 @@ def init_postgres():
             )
         """)
         
-        # Alert history table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS alert_history (
                 id SERIAL PRIMARY KEY,
@@ -374,19 +308,6 @@ def init_postgres():
             )
         """)
         
-        # Maintenance log table
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS maintenance_log (
-                id SERIAL PRIMARY KEY,
-                action TEXT,
-                before_size REAL,
-                after_size REAL,
-                saved REAL,
-                run_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # Create indexes if they don't exist
         cur.execute("CREATE INDEX IF NOT EXISTS idx_alert_email ON alert_history(email)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_alert_cve ON alert_history(cve_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_tracking_new ON cve_tracking(is_new)")
@@ -426,124 +347,10 @@ def send_email_alert(to_email, subject, html_content):
         print(f"❌ Email send failed: {e}")
         return False
 
-def get_keyword_statistics(keywords):
-    """Get statistics for keywords from SQLite database"""
-    stats = {}
-    try:
-        conn = sqlite3.connect(DB)
-        cursor = conn.cursor()
-        
-        for keyword in keywords:
-            # Get total count
-            cursor.execute("""
-                SELECT COUNT(*) FROM cves 
-                WHERE LOWER(description) LIKE LOWER(?)
-            """, (f'%{keyword}%',))
-            total = cursor.fetchone()[0]
-            
-            # Get severity breakdown
-            cursor.execute("""
-                SELECT 
-                    SUM(CASE WHEN cvss_score >= 9.0 THEN 1 ELSE 0 END) as critical,
-                    SUM(CASE WHEN cvss_score >= 7.0 AND cvss_score < 9.0 THEN 1 ELSE 0 END) as high,
-                    SUM(CASE WHEN cvss_score >= 4.0 AND cvss_score < 7.0 THEN 1 ELSE 0 END) as medium,
-                    SUM(CASE WHEN cvss_score > 0 AND cvss_score < 4.0 THEN 1 ELSE 0 END) as low
-                FROM cves 
-                WHERE LOWER(description) LIKE LOWER(?)
-            """, (f'%{keyword}%',))
-            sev = cursor.fetchone()
-            
-            # Get newly added (last 7 days)
-            cursor.execute("""
-                SELECT COUNT(*) FROM cves 
-                WHERE LOWER(description) LIKE LOWER(?)
-                AND julianday('now') - julianday(published) <= 7
-            """, (f'%{keyword}%',))
-            new_count = cursor.fetchone()[0]
-            
-            stats[keyword] = {
-                'total': total,
-                'critical': sev[0] or 0,
-                'high': sev[1] or 0,
-                'medium': sev[2] or 0,
-                'low': sev[3] or 0,
-                'new': new_count
-            }
-        
-        cursor.close()
-        conn.close()
-    except Exception as e:
-        print(f"⚠️ Could not fetch keyword stats: {e}")
-    
-    return stats
-
 def send_bom_alert(email, bom_name, keywords, matches):
-    """Send formatted email for BOM matches with keyword statistics"""
-    
-    # Get keyword statistics
-    keyword_stats = get_keyword_statistics(keywords)
-    
+    """Send formatted email for BOM matches"""
     subject = f"🚨 CVE Alert: {len(matches)} new vulnerabilities match your BOM '{bom_name}'"
     
-    # Create keyword statistics table HTML
-    stats_table = ""
-    if keyword_stats:
-        stats_table = """
-            <h3 style="color: #333; margin-top: 25px;">📊 Keyword Statistics (All Time)</h3>
-            <table style="width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px;">
-                <tr style="background-color: #4a5568; color: white;">
-                    <th style="padding: 10px; border: 1px solid #ddd;">Keyword</th>
-                    <th style="padding: 10px; border: 1px solid #ddd;">Total</th>
-                    <th style="padding: 10px; border: 1px solid #ddd;">Critical</th>
-                    <th style="padding: 10px; border: 1px solid #ddd;">High</th>
-                    <th style="padding: 10px; border: 1px solid #ddd;">Medium</th>
-                    <th style="padding: 10px; border: 1px solid #ddd;">Low</th>
-                    <th style="padding: 10px; border: 1px solid #ddd;">New (7d)</th>
-                </tr>
-        """
-        
-        total_all = 0
-        total_crit = 0
-        total_high = 0
-        total_med = 0
-        total_low = 0
-        total_new = 0
-        
-        for keyword, stats in keyword_stats.items():
-            total_all += stats['total']
-            total_crit += stats['critical']
-            total_high += stats['high']
-            total_med += stats['medium']
-            total_low += stats['low']
-            total_new += stats['new']
-            
-            stats_table += f"""
-                <tr style="background-color: {'#f9f9f9' if loop.index % 2 == 0 else 'white'};">
-                    <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">{keyword}</td>
-                    <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">{stats['total']}</td>
-                    <td style="padding: 8px; border: 1px solid #ddd; text-align: center; color: #d9534f; font-weight: bold;">{stats['critical']}</td>
-                    <td style="padding: 8px; border: 1px solid #ddd; text-align: center; color: #f0ad4e; font-weight: bold;">{stats['high']}</td>
-                    <td style="padding: 8px; border: 1px solid #ddd; text-align: center; color: #5bc0de; font-weight: bold;">{stats['medium']}</td>
-                    <td style="padding: 8px; border: 1px solid #ddd; text-align: center; color: #5cb85c; font-weight: bold;">{stats['low']}</td>
-                    <td style="padding: 8px; border: 1px solid #ddd; text-align: center; background-color: #fcf8e3; font-weight: bold;">{stats['new']}</td>
-                </tr>
-            """
-        
-        # Add totals row
-        stats_table += f"""
-                <tr style="background-color: #e2e8f0; font-weight: bold;">
-                    <td style="padding: 10px; border: 1px solid #ddd;">TOTAL</td>
-                    <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">{total_all}</td>
-                    <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #d9534f;">{total_crit}</td>
-                    <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #f0ad4e;">{total_high}</td>
-                    <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #5bc0de;">{total_med}</td>
-                    <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #5cb85c;">{total_low}</td>
-                    <td style="padding: 10px; border: 1px solid #ddd; text-align: center; background-color: #fcf8e3;">{total_new}</td>
-                </tr>
-            </table>
-        """
-    
-    # Create HTML table for today's matches
     matches_html = ""
     for match in matches:
         cve = match["cve"]
@@ -569,7 +376,6 @@ def send_bom_alert(email, bom_name, keywords, matches):
             </tr>
         """
     
-    # Complete HTML email
     html = f"""
     <html>
     <head>
@@ -603,8 +409,6 @@ def send_bom_alert(email, bom_name, keywords, matches):
                 </table>
             </div>
             
-            {stats_table}
-            
             <h3 style="color: #333; margin-top: 30px;">🆕 New CVEs Found Today</h3>
             <table class="cve-table">
                 <tr>
@@ -634,7 +438,7 @@ def send_bom_alert(email, bom_name, keywords, matches):
 # ============================================================
 
 def _run_nvd_update(user_key):
-    """Background thread: fetch CVEs from NVD and update the local DB."""
+    """Background thread: fetch CVEs from NVD"""
     from datetime import datetime, timedelta, timezone
     global _nvd_job
 
@@ -662,19 +466,6 @@ def _run_nvd_update(user_key):
 
         conn = sqlite3.connect(DB)
         cursor = conn.cursor()
-
-        # Ensure schema has all needed columns
-        try:
-            cursor.execute("PRAGMA table_info(cves)")
-            existing = {row[1] for row in cursor.fetchall()}
-            for col in ["cve_id", "description", "cvss_score", "severity",
-                        "published", "last_modified", "references", "cwe_id"]:
-                if col not in existing:
-                    col_sql = '"references"' if col == "references" else col
-                    cursor.execute(f"ALTER TABLE cves ADD COLUMN {col_sql} TEXT")
-            conn.commit()
-        except Exception as ex:
-            _log(f"Schema note: {ex}")
 
         _log("Connected — starting NVD fetch...", progress=5)
 
@@ -885,11 +676,9 @@ def fetch_new_cves_from_nvd():
                 if not cve_id:
                     continue
                 
-                # Extract description
                 descs = cve_data.get("descriptions", [])
                 desc = next((d["value"] for d in descs if d.get("lang") == "en"), "")
                 
-                # Extract CVSS score
                 metrics = cve_data.get("metrics", {})
                 cvss = None
                 for key in ["cvssMetricV31", "cvssMetricV30", "cvssMetricV2"]:
@@ -902,15 +691,12 @@ def fetch_new_cves_from_nvd():
                 
                 published = cve_data.get("published", "")[:10]
                 
-                # Extract affected companies
                 companies = extract_affected_companies(desc)
                 
-                # Check if CVE already exists
                 cursor.execute("SELECT cve_id FROM cves WHERE cve_id = ?", (cve_id,))
                 exists = cursor.fetchone()
                 
                 if not exists:
-                    # New CVE - insert into SQLite
                     cursor.execute("""
                         INSERT INTO cves (cve_id, description, cvss_score, published)
                         VALUES (?, ?, ?, ?)
@@ -930,11 +716,9 @@ def fetch_new_cves_from_nvd():
             conn.commit()
             conn.close()
             
-            # Update PostgreSQL tracking
             if new_cves and postgres_pool:
                 update_cve_tracking(new_cves)
             
-            # Check BOMs and send alerts
             if new_cves:
                 check_boms_and_send_alerts(new_cves)
             
@@ -994,10 +778,9 @@ def check_boms_and_send_alerts(new_cves):
                         "cve": cve,
                         "keyword": keyword
                     })
-                    break  # Only count once per CVE per BOM
+                    break
         
         if matches:
-            # Record in PostgreSQL if available
             if postgres_pool:
                 try:
                     conn = postgres_pool.getconn()
@@ -1013,7 +796,6 @@ def check_boms_and_send_alerts(new_cves):
                 except Exception as e:
                     print(f"   ⚠️ Could not record alert history: {e}")
             
-            # Send email with keyword statistics
             send_bom_alert(bom['email'], bom['name'], bom['keywords'], matches)
             print(f"   📧 Sent {len(matches)} alerts for {bom['name']}")
 
@@ -1030,19 +812,15 @@ def run_scheduler():
 def check_and_run_monthly_vacuum():
     """Check if it's the 1st of the month and run VACUUM"""
     today = datetime.now()
-    if today.day == 1:  # First day of month
+    if today.day == 1:
         print(f"📅 First day of month detected - running monthly VACUUM")
         optimize_database_full()
     else:
         print(f"📅 Not first day of month (day {today.day}) - skipping VACUUM")
 
-# Daily CVE updates at 2:00 AM UTC
 schedule.every().day.at("02:00").do(fetch_new_cves_from_nvd)
-
-# Check for monthly VACUUM every day at 2:30 AM
 schedule.every().day.at("02:30").do(check_and_run_monthly_vacuum)
 
-# Start scheduler
 scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
 scheduler_thread.start()
 print("⏰ Scheduler started — daily CVE update at 02:00 UTC")
@@ -1127,14 +905,12 @@ def _deobfuscate(token: str) -> str:
         return token
 
 def generate_csrf_token() -> str:
-    from flask import session as fs
-    if "csrf_token" not in fs:
-        fs["csrf_token"] = secrets.token_hex(24)
-    return fs["csrf_token"]
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(24)
+    return session["csrf_token"]
 
 def validate_csrf(token: str) -> bool:
-    from flask import session as fs
-    return secrets.compare_digest(fs.get("csrf_token", ""), token or "")
+    return secrets.compare_digest(session.get("csrf_token", ""), token or "")
 
 @app.context_processor
 def inject_csrf():
@@ -1164,10 +940,9 @@ USE_AI_CACHE = True
 DATE_COLUMN = "published"
 
 def get_ai_config():
-    from flask import session as fsession
-    provider = fsession.get("ai_provider", DEFAULT_AI_PROVIDER)
-    api_key = fsession.get("ai_api_key", "")
-    model = fsession.get("ai_model", "")
+    provider = session.get("ai_provider", DEFAULT_AI_PROVIDER)
+    api_key = session.get("ai_api_key", "")
+    model = session.get("ai_model", "")
 
     if provider == "deepseek":
         api_key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
@@ -1216,7 +991,7 @@ PROVIDER_INFO = {
 }
 
 # ============================================================
-# DATABASE INITIALIZATION - FIXED VERSION
+# DATABASE INITIALIZATION
 # ============================================================
 
 def init_database():
@@ -1225,7 +1000,6 @@ def init_database():
         conn = sqlite3.connect(DB)
         cursor = conn.cursor()
 
-        # Create cves table - IMPORTANT: "references" is a keyword, must be in double quotes
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS cves (
             cve_id TEXT PRIMARY KEY,
@@ -1239,7 +1013,6 @@ def init_database():
         )
         """)
 
-        # Create AI analysis table
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS cve_ai_analysis (
             cve_id TEXT PRIMARY KEY,
@@ -1261,7 +1034,6 @@ def init_database():
         )
         """)
 
-        # Set optimal pragmas
         cursor.execute("PRAGMA auto_vacuum = FULL")
         cursor.execute("PRAGMA page_size = 4096")
         cursor.execute("PRAGMA cache_size = -2000")
@@ -1269,23 +1041,14 @@ def init_database():
         cursor.execute("PRAGMA journal_mode = WAL")
         cursor.execute("PRAGMA synchronous = NORMAL")
 
-        # Create indexes
         try:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_cves_published ON cves(published DESC)")
-        except Exception as e:
-            print(f"⚠️ Index creation warning (published): {e}")
-        
+        except: pass
         try:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_cves_cvss_score ON cves(cvss_score)")
-        except Exception as e:
-            print(f"⚠️ Index creation warning (cvss): {e}")
-        
-        try:
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_analysis_fix_status ON cve_ai_analysis(fix_status)")
-        except Exception as e:
-            print(f"⚠️ Index creation warning (fix_status): {e}")
+        except: pass
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_analysis_fix_status ON cve_ai_analysis(fix_status)")
 
-        # Verify table was created
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cves'")
         if cursor.fetchone():
             print("✅ SQLite cves table ready")
@@ -1294,7 +1057,7 @@ def init_database():
 
         conn.commit()
         conn.close()
-        print("✅ SQLite database initialized with optimal settings")
+        print("✅ SQLite database initialized")
         return True
     except Exception as e:
         print(f"⚠️ SQLite init error: {e}")
@@ -1302,11 +1065,10 @@ def init_database():
 
 def get_db_connection():
     conn = sqlite3.connect(DB)
-    # Apply optimal settings for memory efficiency
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
-    conn.execute("PRAGMA cache_size = -2000")  # 2MB cache
-    conn.execute("PRAGMA mmap_size = 268435456")  # 256MB memory map
+    conn.execute("PRAGMA cache_size = -2000")
+    conn.execute("PRAGMA mmap_size = 268435456")
     conn.execute("PRAGMA temp_store = MEMORY")
     conn.row_factory = sqlite3.Row
     return conn
@@ -1316,16 +1078,11 @@ def calculate_severity(score):
         return "Unknown"
     try:
         score = float(score)
-        if score >= 9.0:
-            return "Critical"
-        elif score >= 7.0:
-            return "High"
-        elif score >= 4.0:
-            return "Medium"
-        elif score > 0:
-            return "Low"
-        else:
-            return "Unknown"
+        if score >= 9.0: return "Critical"
+        elif score >= 7.0: return "High"
+        elif score >= 4.0: return "Medium"
+        elif score > 0: return "Low"
+        else: return "Unknown"
     except (ValueError, TypeError):
         return "Unknown"
 
@@ -1359,7 +1116,7 @@ def extract_affected_companies(description: str) -> list:
     return found
 
 # ============================================================
-# API ROUTES - FIXED STATS ROUTE WITH NEW_7_DAYS
+# API ROUTES - FIXED STATS ROUTE
 # ============================================================
 
 @app.route("/stats")
@@ -1369,11 +1126,9 @@ def stats():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Get total count
         cursor.execute("SELECT COUNT(*) FROM cves")
         total = cursor.fetchone()[0]
         
-        # Get severity counts
         cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 9.0")
         critical = cursor.fetchone()[0]
         
@@ -1386,29 +1141,23 @@ def stats():
         cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score > 0 AND cvss_score < 4.0")
         low = cursor.fetchone()[0]
         
-        # Get new CVEs from last 7 days
         cursor.execute("""
             SELECT COUNT(*) FROM cves 
             WHERE julianday('now') - julianday(published) <= 7
         """)
         new_7_days = cursor.fetchone()[0]
         
-        # Get AI count
         cursor.execute("SELECT COUNT(*) FROM cve_ai_analysis")
         ai_count = cursor.fetchone()[0]
         
-        # Get date range
-        oldest = None
-        newest = None
         try:
             cursor.execute("SELECT MIN(published), MAX(published) FROM cves")
             row = cursor.fetchone()
             oldest = row[0]
             newest = row[1]
         except:
-            pass
+            oldest, newest = None, None
         
-        # Get last update time (from scheduler or current)
         last_update = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
         
         conn.close()
@@ -1450,14 +1199,46 @@ def stats():
 
 @app.route("/keyword-stats")
 def keyword_stats():
-    """Get statistics for keywords (placeholder)"""
-    return jsonify({})
+    """Get statistics for keywords"""
+    keywords_param = request.args.get("keywords", "")
+    severity_filter = request.args.get("severity", "")
+    
+    if not keywords_param:
+        return jsonify({})
+    
+    keywords = [k.strip() for k in keywords_param.split(',') if k.strip()]
+    counts = {}
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        for kw in keywords:
+            query = "SELECT COUNT(*) as count FROM cves WHERE description LIKE ?"
+            params = [f"%{kw}%"]
+            if severity_filter:
+                if severity_filter == "Critical":
+                    query += " AND cvss_score >= 9.0"
+                elif severity_filter == "High":
+                    query += " AND cvss_score >= 7.0 AND cvss_score < 9.0"
+                elif severity_filter == "Medium":
+                    query += " AND cvss_score >= 4.0 AND cvss_score < 7.0"
+                elif severity_filter == "Low":
+                    query += " AND cvss_score > 0 AND cvss_score < 4.0"
+            cursor.execute(query, params)
+            result = cursor.fetchone()
+            counts[kw] = result[0] if result else 0
+        
+        conn.close()
+        return jsonify(counts)
+    except Exception as e:
+        print(f"❌ Keyword stats error: {e}")
+        return jsonify({})
 
 @app.route("/api/boms", methods=["GET"])
 def get_boms():
-    """Get all active BOMs (from environment variables)"""
+    """Get all active BOMs"""
     boms = []
-    
     for bom in ENV_BOMS:
         boms.append({
             "id": f"env_{bom['id']}",
@@ -1468,31 +1249,11 @@ def get_boms():
             "last_alert_sent": None,
             "source": "environment"
         })
-    
-    # Also get alert history counts if PostgreSQL is available
-    if postgres_pool:
-        try:
-            conn = postgres_pool.getconn()
-            cur = conn.cursor()
-            
-            for bom in boms:
-                cur.execute("""
-                    SELECT COUNT(*) FROM alert_history 
-                    WHERE email = %s AND sent_at > NOW() - INTERVAL '7 days'
-                """, (bom['email'],))
-                count = cur.fetchone()[0]
-                bom['alerts_last_7_days'] = count
-            
-            cur.close()
-            postgres_pool.putconn(conn)
-        except Exception as e:
-            print(f"⚠️ Error fetching alert counts: {e}")
-    
     return jsonify(boms)
 
 @app.route("/api/alerts/recent", methods=["GET"])
 def get_recent_alerts():
-    """Get recent alerts from PostgreSQL"""
+    """Get recent alerts"""
     if not postgres_pool:
         return jsonify([])
     
@@ -1523,40 +1284,6 @@ def get_recent_alerts():
         return jsonify(alerts)
     except Exception as e:
         print(f"❌ Error fetching alerts: {e}")
-        return jsonify([])
-
-@app.route("/api/maintenance/logs", methods=["GET"])
-def get_maintenance_logs():
-    """Get maintenance logs from PostgreSQL"""
-    if not postgres_pool:
-        return jsonify([])
-    
-    try:
-        conn = postgres_pool.getconn()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT action, before_size, after_size, saved, run_at
-            FROM maintenance_log
-            ORDER BY run_at DESC
-            LIMIT 12
-        """)
-        rows = cur.fetchall()
-        cur.close()
-        postgres_pool.putconn(conn)
-        
-        logs = []
-        for row in rows:
-            logs.append({
-                "action": row[0],
-                "before_size": row[1],
-                "after_size": row[2],
-                "saved": row[3],
-                "run_at": row[4].isoformat() if row[4] else None
-            })
-        
-        return jsonify(logs)
-    except Exception as e:
-        print(f"❌ Error fetching maintenance logs: {e}")
         return jsonify([])
 
 # ============================================================
@@ -1627,7 +1354,6 @@ def index():
             keyword = ""
             total = len(cves)
 
-        # Mark new CVEs (from last 7 days)
         if postgres_pool and cves:
             try:
                 conn = postgres_pool.getconn()
@@ -1709,7 +1435,7 @@ def search_cves_by_keywords(keywords, severity_filter=None, page=1, per_page=50,
     count_q = query.replace("SELECT *", "SELECT COUNT(*) as count")
     cursor.execute(count_q, params)
     result = cursor.fetchone()
-    total = result['count'] if result else 0
+    total = result[0] if result else 0
 
     query += f" ORDER BY {DATE_COLUMN} DESC LIMIT ? OFFSET ?"
     params.extend([per_page, (page - 1) * per_page])
