@@ -37,7 +37,6 @@
             margin: 0;
         }
 
-        /* ── STICKY HEADER ── */
         .app-header {
             background: var(--dark);
             color: white;
@@ -60,7 +59,6 @@
         .brand img { height: 30px; }
         .header-right { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 
-        /* ── TOP UPDATE BANNER ── */
         .update-banner {
             background: linear-gradient(90deg, #5b21b6 0%, #7c3aed 40%, #4f46e5 100%);
             color: white;
@@ -92,10 +90,8 @@
         }
         @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
 
-        /* ── MAIN BODY ── */
         .app-body { padding: 14px 20px; }
 
-        /* ── STAT STRIP ── */
         .stat-strip {
             display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
         }
@@ -128,7 +124,6 @@
         .sev-pill.med  { background: #cffafe; color: #164e63; }
         .sev-pill.low  { background: #f3f4f6; color: #374151; }
 
-        /* ── SEARCH PANEL ── */
         .search-panel {
             background: white; border: 1px solid var(--border);
             border-radius: 12px; overflow: hidden; margin-bottom: 12px;
@@ -155,7 +150,6 @@
         .upload-zone:hover { border-color: var(--primary); background: #dbeafe; }
         .upload-zone i { font-size: 1.8rem; color: var(--primary); }
 
-        /* ── INDUSTRY BAR ── */
         .industry-bar {
             background: white; border: 1px solid var(--border);
             border-radius: 10px; padding: 9px 14px;
@@ -195,7 +189,6 @@
             padding: 0 5px; font-size: .65rem; font-family: var(--mono);
         }
 
-        /* ── KEYWORD STRIP ── */
         .kw-strip {
             background: white; border: 1px solid #bfdbfe;
             border-radius: 10px; padding: 7px 14px;
@@ -219,7 +212,6 @@
         .kw-rm { cursor: pointer; color: #93c5fd; font-size: .95rem; font-weight: 700; }
         .kw-rm:hover { color: var(--danger); }
 
-        /* ── RESULTS HEADER ── */
         .results-header {
             display: flex; justify-content: space-between;
             align-items: center; margin-bottom: 9px;
@@ -243,7 +235,6 @@
         }
         .export-btn:hover { background: #046c4e; color: white; }
 
-        /* ── TABLE ── */
         .table-wrap {
             background: white; border: 1px solid var(--border);
             border-radius: 12px; overflow: hidden;
@@ -384,7 +375,6 @@
             margin: 2px; display: inline-block;
         }
 
-        /* ── SKELETON ── */
         @keyframes shimmer {
             0%   { background-position: -400px 0; }
             100% { background-position:  400px 0; }
@@ -396,7 +386,6 @@
             background-size: 400px 100%; animation: shimmer 1.4s infinite;
         }
 
-        /* ── AI PROGRESS ── */
         .ai-progress-bar {
             position: fixed; top: 0; left: 0; right: 0;
             height: 3px; background: #dbeafe; z-index: 9999; display: none;
@@ -418,7 +407,6 @@
         .ai-dot { width: 7px; height: 7px; border-radius: 50%; background: #34d399; animation: pulse 1s infinite; }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-        /* ── HEADER AI CONTROLS ── */
         .ai-toggle-group {
             display: flex; align-items: center; gap: 7px;
             background: rgba(255,255,255,.07);
@@ -441,7 +429,6 @@
         .provider-pill:hover { background: rgba(255,255,255,.18); }
         .provider-pill .pdot { width: 6px; height: 6px; border-radius: 50%; }
 
-        /* Provider panel */
         .ai-panel {
             display: none; position: absolute; top: calc(100% + 10px); right: 0;
             width: 300px; background: #1e293b;
@@ -497,7 +484,6 @@
             font-size: .64rem; color: #475569; text-align: center;
         }
 
-        /* ── HEADER BUTTONS ── */
         .hdr-btn {
             display: inline-flex; align-items: center; gap: 4px;
             padding: 4px 10px; border-radius: 7px;
@@ -513,7 +499,6 @@
         }
         .hdr-btn-ghost:hover { color: white; background: rgba(255,255,255,.18); }
 
-        /* ── SPINNER ── */
         .spinner-overlay {
             display: none; position: fixed; inset: 0;
             background: rgba(17,25,40,.6); z-index: 9999;
@@ -527,13 +512,11 @@
         }
         .spinner-box p { color: var(--text-muted); margin: 0; font-size: .8rem; }
 
-        /* ── EMPTY STATE ── */
         .empty-state {
             text-align: center; padding: 50px 20px; color: var(--text-muted);
         }
         .empty-state i { font-size: 2.6rem; color: #d1d5db; }
 
-        /* ── PAGINATION ── */
         .pagination .page-link { color: var(--primary); border-color: var(--border); font-size: .78rem; }
         .pagination .page-item.active .page-link { background: var(--primary); border-color: var(--primary); }
 
@@ -553,341 +536,12 @@
     <span id="aiToastText">Fetching AI analysis…</span>
 </div>
 
-{% if view == 'admin_login' %}
-<!-- ═══════════ ADMIN LOGIN ═══════════ -->
-<div style="background:#0f172a;min-height:100vh;display:flex;align-items:center;justify-content:center;">
-  <div style="background:#1e293b;border:1px solid #334155;border-radius:16px;padding:40px 36px;
-              width:100%;max-width:400px;box-shadow:0 25px 60px rgba(0,0,0,.5);">
-    <div style="width:58px;height:58px;border-radius:50%;background:linear-gradient(135deg,#3b82f6,#6366f1);
-                display:flex;align-items:center;justify-content:center;font-size:1.5rem;color:white;
-                margin:0 auto 16px;box-shadow:0 0 0 6px rgba(59,130,246,.15);">
-      <i class="bi bi-shield-lock-fill"></i>
-    </div>
-    <h4 style="color:#f1f5f9;font-weight:700;font-size:1.15rem;text-align:center;margin-bottom:4px;">Admin Panel</h4>
-    <p style="color:#64748b;font-size:.8rem;text-align:center;margin-bottom:24px;">CVE Monitoring Dashboard</p>
-
-    {% if login_error %}
-    <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#fca5a5;
-                border-radius:8px;padding:9px 12px;font-size:.78rem;margin-bottom:14px;">
-      <i class="bi bi-exclamation-triangle-fill me-2"></i>{{ login_error }}
-    </div>
-    {% endif %}
-
-    <form method="post" action="/admin">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <div style="margin-bottom:14px;">
-        <label style="color:#94a3b8;font-size:.78rem;font-weight:600;display:block;margin-bottom:4px;">Username</label>
-        <input type="text" name="username" autofocus autocomplete="username"
-               placeholder="admin"
-               style="width:100%;background:#0f172a;border:1px solid #334155;border-radius:8px;
-                      color:#f1f5f9;padding:10px 12px;font-size:.85rem;outline:none;box-sizing:border-box;">
-      </div>
-      <div style="margin-bottom:22px;">
-        <label style="color:#94a3b8;font-size:.78rem;font-weight:600;display:block;margin-bottom:4px;">Password</label>
-        <input type="password" name="password" autocomplete="current-password"
-               placeholder="••••••••"
-               style="width:100%;background:#0f172a;border:1px solid #334155;border-radius:8px;
-                      color:#f1f5f9;padding:10px 12px;font-size:.85rem;outline:none;box-sizing:border-box;">
-      </div>
-      <button type="submit"
-              style="width:100%;background:linear-gradient(135deg,#3b82f6,#6366f1);border:none;color:white;
-                     font-weight:700;padding:10px;border-radius:8px;font-size:.88rem;cursor:pointer;">
-        <i class="bi bi-box-arrow-in-right me-1"></i>Sign In
-      </button>
-    </form>
-    <div style="text-align:center;margin-top:14px;">
-      <a href="/" style="color:#475569;font-size:.74rem;text-decoration:none;">
-        <i class="bi bi-arrow-left me-1"></i>Back to Dashboard
-      </a>
-    </div>
-  </div>
-</div>
-
-{% elif view == 'admin' %}
-<!-- ═══════════ ADMIN PANEL ═══════════ -->
-<style>
-  .adm-topbar {
-    background:#1e293b;border-bottom:1px solid #334155;
-    padding:10px 24px;display:flex;align-items:center;
-    justify-content:space-between;position:sticky;top:0;z-index:100;
-  }
-  .adm-brand { font-weight:700;font-size:.95rem;color:#f1f5f9;display:flex;align-items:center;gap:8px; }
-  .adm-brand i { color:#3b82f6; }
-  .adm-badge { background:rgba(99,102,241,.2);color:#a5b4fc;border:1px solid rgba(99,102,241,.35);
-               border-radius:20px;padding:2px 10px;font-size:.72rem;font-weight:700; }
-  .adm-body { padding:20px 24px;max-width:1200px;margin:0 auto;background:#0f172a;min-height:100vh; }
-  .adm-section { font-size:.7rem;font-weight:700;color:#64748b;text-transform:uppercase;
-                 letter-spacing:.6px;margin:22px 0 10px;display:flex;align-items:center;gap:6px; }
-  .adm-section i { color:#3b82f6; }
-  .adm-stat-row { display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px; }
-  .adm-stat { background:#1e293b;border:1px solid #334155;border-radius:12px;padding:14px 16px;
-              display:flex;align-items:center;gap:12px; }
-  .adm-icon { width:38px;height:38px;border-radius:10px;display:flex;align-items:center;
-              justify-content:center;font-size:1.1rem;flex-shrink:0; }
-  .adm-icon.blue   { background:rgba(59,130,246,.15);color:#3b82f6; }
-  .adm-icon.green  { background:rgba(16,185,129,.15);color:#10b981; }
-  .adm-icon.amber  { background:rgba(245,158,11,.15);color:#f59e0b; }
-  .adm-icon.purple { background:rgba(139,92,246,.15);color:#a78bfa; }
-  .adm-slabel { font-size:.68rem;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.4px; }
-  .adm-sval   { font-size:1.1rem;font-weight:700;color:#f1f5f9; }
-  .adm-grid   { display:grid;grid-template-columns:1fr 1fr;gap:14px; }
-  @media(max-width:680px){ .adm-grid { grid-template-columns:1fr; } }
-  .adm-card   { background:#1e293b;border:1px solid #334155;border-radius:12px;padding:16px; }
-  .adm-card-title { font-size:.72rem;font-weight:700;color:#64748b;text-transform:uppercase;
-                    letter-spacing:.5px;margin-bottom:12px;display:flex;align-items:center;gap:5px; }
-  .adm-card-title i { color:#3b82f6; }
-  .adm-kv { display:flex;justify-content:space-between;align-items:center;
-            padding:7px 0;border-bottom:1px solid #334155;font-size:.8rem; }
-  .adm-kv:last-child { border-bottom:none; }
-  .adm-kv-k { color:#64748b; }
-  .adm-kv-v { font-family:monospace;font-size:.78rem;color:#f1f5f9;font-weight:600; }
-  .adm-dot { width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px; }
-  .adm-dot.on  { background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.2); }
-  .adm-dot.off { background:#ef4444;box-shadow:0 0 0 3px rgba(239,68,68,.2); }
-  .adm-btn { border:1px solid #334155;border-radius:8px;padding:7px 14px;font-size:.78rem;
-             font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:5px;
-             transition:all .15s;background:transparent; }
-  .adm-btn.blue  { color:#93c5fd;border-color:rgba(59,130,246,.4); }
-  .adm-btn.blue:hover  { background:rgba(59,130,246,.15); }
-  .adm-btn.green { color:#6ee7b7;border-color:rgba(16,185,129,.4); }
-  .adm-btn.green:hover { background:rgba(16,185,129,.15); }
-  .adm-btn.red   { color:#fca5a5;border-color:rgba(239,68,68,.4); }
-  .adm-btn.red:hover   { background:rgba(239,68,68,.15); }
-  .adm-btn.ghost { color:#94a3b8;border-color:rgba(255,255,255,.12); }
-  .adm-btn.ghost:hover { color:#f1f5f9;background:rgba(255,255,255,.07); }
-  .adm-table { width:100%;border-collapse:collapse; }
-  .adm-table th { font-size:.68rem;font-weight:700;color:#64748b;text-transform:uppercase;
-                  letter-spacing:.5px;padding:8px 10px;border-bottom:1px solid #334155;text-align:left; }
-  .adm-table td { padding:9px 10px;border-bottom:1px solid rgba(51,65,85,.6);font-size:.78rem;vertical-align:middle; }
-  .adm-table tr:last-child td { border-bottom:none; }
-  .adm-scroll { max-height:300px;overflow-y:auto; }
-  .adm-scroll::-webkit-scrollbar { width:5px; }
-  .adm-scroll::-webkit-scrollbar-thumb { background:#334155;border-radius:3px; }
-  .kw-chip { display:inline-block;background:rgba(59,130,246,.15);color:#93c5fd;
-             border:1px solid rgba(59,130,246,.25);padding:1px 7px;border-radius:8px;
-             font-size:.65rem;font-weight:600;margin:2px; }
-  .kw-tag-a { background:rgba(245,158,11,.15);color:#fcd34d;border:1px solid rgba(245,158,11,.25);
-              padding:1px 7px;border-radius:8px;font-size:.68rem;font-weight:600; }
-  .bom-tag-a{ background:rgba(99,102,241,.15);color:#a5b4fc;border:1px solid rgba(99,102,241,.25);
-              padding:1px 7px;border-radius:8px;font-size:.68rem;font-weight:600; }
-  .adm-spin { animation:admSpin .7s linear infinite;display:inline-block; }
-  @keyframes admSpin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
-  .adm-toast-zone { position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px; }
-  .adm-tst { padding:10px 16px;border-radius:9px;font-size:.78rem;font-weight:600;
-             display:flex;align-items:center;gap:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);
-             animation:admSlide .2s ease; }
-  @keyframes admSlide { from{transform:translateX(60px);opacity:0} to{transform:none;opacity:1} }
-  .adm-tst.ok   { background:#064e3b;color:#6ee7b7;border:1px solid #065f46; }
-  .adm-tst.err  { background:#7f1d1d;color:#fca5a5;border:1px solid #991b1b; }
-  .adm-tst.info { background:#1e3a5f;color:#93c5fd;border:1px solid #1d4ed8; }
-  body { background:#0f172a; }
-</style>
-
-<div class="adm-topbar">
-  <div class="adm-brand">
-    <i class="bi bi-shield-lock-fill"></i>CVE Dashboard
-    <span class="adm-badge">ADMIN</span>
-  </div>
-  <div style="display:flex;gap:8px;align-items:center;">
-    <a href="/" class="adm-btn ghost" style="text-decoration:none;"><i class="bi bi-house"></i>Dashboard</a>
-    <a href="/admin/logout" class="adm-btn red" style="text-decoration:none;"><i class="bi bi-box-arrow-right"></i>Logout</a>
-  </div>
-</div>
-
-<div class="adm-body">
-
-  <!-- Stats -->
-  <div class="adm-section"><i class="bi bi-speedometer2"></i>Overview</div>
-  <div class="adm-stat-row">
-    <div class="adm-stat">
-      <div class="adm-icon blue"><i class="bi bi-database-fill"></i></div>
-      <div><div class="adm-slabel">Total CVEs</div>
-           <div class="adm-sval">{{ "{:,}".format(total_cves) }}</div></div>
-    </div>
-    <div class="adm-stat">
-      <div class="adm-icon amber"><i class="bi bi-calendar-event"></i></div>
-      <div><div class="adm-slabel">Latest CVE</div>
-           <div class="adm-sval" style="font-size:.88rem;font-family:monospace;">{{ latest_cve }}</div></div>
-    </div>
-    <div class="adm-stat">
-      <div class="adm-icon green"><i class="bi bi-hdd"></i></div>
-      <div><div class="adm-slabel">DB Size</div>
-           <div class="adm-sval">{{ db_size_mb }} MB</div></div>
-    </div>
-    <div class="adm-stat">
-      <div class="adm-icon blue"><i class="bi bi-bell"></i></div>
-      <div><div class="adm-slabel">BOMs Active</div>
-           <div class="adm-sval">{{ env_boms|length }}</div></div>
-    </div>
-    <div class="adm-stat">
-      <div class="adm-icon purple"><i class="bi bi-clock"></i></div>
-      <div><div class="adm-slabel">Next Auto-Update</div>
-           <div class="adm-sval" style="font-size:.76rem;font-family:monospace;">{{ scheduler_next }}</div></div>
-    </div>
-  </div>
-
-  <!-- Status + Actions -->
-  <div class="adm-section"><i class="bi bi-activity"></i>System</div>
-  <div class="adm-grid">
-
-    <div class="adm-card">
-      <div class="adm-card-title"><i class="bi bi-activity"></i>Status</div>
-      <div class="adm-kv">
-        <span class="adm-kv-k">PostgreSQL (Neon)</span>
-        <span class="adm-kv-v">
-          <span class="adm-dot {{ 'on' if pg_connected else 'off' }}"></span>
-          {{ 'Connected' if pg_connected else 'Disconnected' }}
-        </span>
-      </div>
-      <div class="adm-kv">
-        <span class="adm-kv-k">SMTP Email</span>
-        <span class="adm-kv-v">
-          <span class="adm-dot {{ 'on' if smtp_configured else 'off' }}"></span>
-          {{ 'Configured' if smtp_configured else 'Not configured' }}
-        </span>
-      </div>
-      <div class="adm-kv">
-        <span class="adm-kv-k">Scheduler</span>
-        <span class="adm-kv-v"><span class="adm-dot on"></span>Running — 02:00 UTC daily</span>
-      </div>
-      <div class="adm-kv">
-        <span class="adm-kv-k">Next Run</span>
-        <span class="adm-kv-v">{{ scheduler_next }}</span>
-      </div>
-    </div>
-
-    <div class="adm-card">
-      <div class="adm-card-title"><i class="bi bi-lightning-charge-fill"></i>Actions</div>
-      <div style="font-size:.76rem;color:#64748b;margin-bottom:8px;">
-        Fetch last 24h CVEs from NVD + send BOM alerts
-      </div>
-      <button class="adm-btn blue" id="admUpdateBtn" onclick="admTriggerUpdate()">
-        <i class="bi bi-cloud-arrow-down" id="admUpdateIcon"></i>
-        <span id="admUpdateText">Trigger CVE Update</span>
-      </button>
-
-      <div style="border-top:1px solid #334155;margin:14px 0 10px;"></div>
-      <div style="font-size:.76rem;color:#64748b;margin-bottom:8px;">
-        Send test email to verify SMTP
-      </div>
-      <div style="display:flex;gap:7px;flex-wrap:wrap;">
-        <input type="email" id="admTestEmail"
-               value="{{ env_boms[0].email if env_boms else '' }}"
-               placeholder="test@example.com"
-               style="background:#0f172a;border:1px solid #334155;border-radius:7px;
-                      color:#f1f5f9;font-size:.76rem;padding:6px 10px;outline:none;flex:1;min-width:160px;">
-        <button class="adm-btn green" id="admEmailBtn" onclick="admTestEmail()">
-          <i class="bi bi-envelope-check" id="admEmailIcon"></i>
-          <span id="admEmailText">Send Test</span>
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- BOM configs -->
-  {% if env_boms %}
-  <div class="adm-section"><i class="bi bi-list-check"></i>BOM Alert Configurations</div>
-  <div class="adm-card">
-    <div class="adm-scroll">
-      <table class="adm-table">
-        <thead><tr><th>BOM Name</th><th>Alert Email</th><th>Keywords</th><th style="text-align:center;">Count</th></tr></thead>
-        <tbody>
-        {% for bom in env_boms %}
-        <tr>
-          <td><strong style="color:#f1f5f9;">{{ bom.name }}</strong>
-              <div style="font-size:.65rem;color:#64748b;">ENV {{ loop.index }}</div></td>
-          <td style="font-family:monospace;font-size:.76rem;color:#93c5fd;">{{ bom.email }}</td>
-          <td>{% for kw in bom.keywords %}<span class="kw-chip">{{ kw }}</span>{% endfor %}</td>
-          <td style="text-align:center;font-weight:700;font-family:monospace;color:#f1f5f9;">{{ bom.keywords|length }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- Alert history -->
-  <div class="adm-section"><i class="bi bi-bell-history"></i>Recent Alert History</div>
-  <div class="adm-card">
-    {% if recent_alerts %}
-    <div class="adm-scroll">
-      <table class="adm-table">
-        <thead><tr><th>CVE ID</th><th>Keyword</th><th>BOM</th><th>Email</th><th>Time</th></tr></thead>
-        <tbody>
-        {% for a in recent_alerts %}
-        <tr>
-          <td><a href="https://nvd.nist.gov/vuln/detail/{{ a.cve_id }}" target="_blank"
-                 style="font-family:monospace;color:#3b82f6;font-size:.75rem;font-weight:700;text-decoration:none;">
-              {{ a.cve_id }}</a></td>
-          <td><span class="kw-tag-a">{{ a.keyword or '—' }}</span></td>
-          <td><span class="bom-tag-a">{{ a.bom_name or '—' }}</span></td>
-          <td style="font-family:monospace;font-size:.72rem;color:#64748b;">{{ a.email }}</td>
-          <td style="font-family:monospace;font-size:.7rem;color:#64748b;">{{ a.sent_at }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-    <div style="text-align:center;padding:30px;color:#64748b;font-size:.82rem;">
-      <i class="bi bi-inbox" style="font-size:2rem;display:block;margin-bottom:8px;opacity:.4;"></i>
-      No alerts have been sent yet
-    </div>
-    {% endif %}
-  </div>
-
-</div><!-- /adm-body -->
-
-<div class="adm-toast-zone" id="admToastZone"></div>
-
-<script>
-function admToast(msg, type='info', dur=4000) {
-  const z = document.getElementById('admToastZone');
-  const el = document.createElement('div');
-  const ico = type==='ok'?'bi-check-circle-fill':type==='err'?'bi-x-circle-fill':'bi-info-circle-fill';
-  el.className = `adm-tst ${type}`;
-  el.innerHTML = `<i class="bi ${ico}"></i>${msg}`;
-  z.appendChild(el); setTimeout(()=>el.remove(), dur);
-}
-async function admTriggerUpdate() {
-  const btn=document.getElementById('admUpdateBtn'),icon=document.getElementById('admUpdateIcon'),txt=document.getElementById('admUpdateText');
-  btn.disabled=true; icon.className='bi bi-arrow-clockwise adm-spin'; txt.textContent='Running…';
-  admToast('CVE update started — takes ~1 min','info',8000);
-  try {
-    const r = await fetch('/admin/trigger-update',{method:'POST',credentials:'include',
-      headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf_token:'{{ csrf_token }}'})});
-    const d = await r.json();
-    if(r.ok) admToast('✓ Update triggered at '+d.time.slice(0,19).replace('T',' '),'ok');
-    else admToast('Error: '+(d.error||'Unknown'),'err');
-  } catch(e){ admToast('Network error','err'); }
-  setTimeout(()=>{ btn.disabled=false; icon.className='bi bi-cloud-arrow-down'; txt.textContent='Trigger CVE Update'; },5000);
-}
-async function admTestEmail() {
-  const addr=document.getElementById('admTestEmail').value.trim();
-  if(!addr){admToast('Enter an email address','err');return;}
-  const btn=document.getElementById('admEmailBtn'),icon=document.getElementById('admEmailIcon'),txt=document.getElementById('admEmailText');
-  btn.disabled=true; icon.className='bi bi-arrow-clockwise adm-spin'; txt.textContent='Sending…';
-  try {
-    const r = await fetch('/admin/test-email',{method:'POST',credentials:'include',
-      headers:{'Content-Type':'application/json'},body:JSON.stringify({email:addr})});
-    const d = await r.json();
-    if(d.ok) admToast(`✓ Test email sent to ${addr}`,'ok');
-    else admToast('SMTP failed — check credentials','err');
-  } catch(e){ admToast('Network error','err'); }
-  btn.disabled=false; icon.className='bi bi-envelope-check'; txt.textContent='Send Test';
-}
-</script>
-
-{% else %}
-<!-- ═══════════ NORMAL DASHBOARD ═══════════ -->
 <header class="app-header">
     <a href="/" class="brand">
         <img src="{{ url_for('static', filename='tata-logo.png') }}" alt="Logo">
         <span>TMPVL CVE Monitoring</span>
     </a>
     <div class="header-right">
-        <!-- AI toggle -->
         <div class="ai-toggle-group">
             <span class="ai-status-dot {% if use_ai %}on{% else %}off{% endif %}"></span>
             <input class="form-check-input m-0" type="checkbox" id="aiToggle"
@@ -902,7 +556,6 @@ async function admTestEmail() {
                 <i class="bi bi-chevron-down" style="font-size:.55rem;opacity:.7"></i>
             </button>
 
-            <!-- Provider panel -->
             <div class="ai-panel" id="aiPanel">
                 <div class="panel-title"><i class="bi bi-cpu me-1"></i>AI Provider &amp; Key</div>
                 <div class="provider-grid">
@@ -945,25 +598,21 @@ async function admTestEmail() {
             </div>
         </div>
 
-        <!-- Manual update -->
         <button class="hdr-btn hdr-btn-green" id="updateBtn" onclick="triggerUpdate()" type="button"
                 title="Trigger manual CVE update now">
             <i class="bi bi-cloud-arrow-down" id="updateIcon"></i>Update DB
         </button>
 
-        <!-- Status check -->
         <a href="/api/nvd-status" target="_blank" class="hdr-btn hdr-btn-ghost" title="System status">
             <i class="bi bi-activity"></i>Status
         </a>
 
-        <!-- Admin -->
         <a href="/admin" class="hdr-btn hdr-btn-ghost" title="Admin panel">
             <i class="bi bi-shield-lock-fill"></i>
         </a>
     </div>
 </header>
 
-<!-- ═══════════ UPDATE BANNER ═══════════ -->
 <div class="update-banner">
     <div class="left">
         <i class="bi bi-clock"></i>
@@ -976,7 +625,6 @@ async function admTestEmail() {
 
 <div class="app-body">
 
-    <!-- ═══════════ STAT STRIP ═══════════ -->
     <div class="stat-strip">
         <div class="stat-card">
             <div class="stat-icon blue"><i class="bi bi-calendar-range"></i></div>
@@ -1027,7 +675,6 @@ async function admTestEmail() {
         {% endif %}
     </div>
 
-    <!-- ═══════════ SEARCH PANEL ═══════════ -->
     <div class="search-panel">
         <ul class="nav nav-tabs" role="tablist">
             <li class="nav-item" role="presentation">
@@ -1054,7 +701,6 @@ async function admTestEmail() {
         </ul>
         <div class="tab-content">
 
-            <!-- Single Keyword -->
             <div class="tab-pane fade {% if request.args.get('tab') not in ['bom','multi'] %}show active{% endif %}"
                  id="pane-single" role="tabpanel">
                 <form method="post" action="/search" id="singleForm">
@@ -1087,7 +733,6 @@ async function admTestEmail() {
                 </form>
             </div>
 
-            <!-- BOM Upload -->
             <div class="tab-pane fade {% if request.args.get('tab')=='bom' %}show active{% endif %}"
                  id="pane-bom" role="tabpanel">
                 <form method="post" enctype="multipart/form-data" action="/upload-bom" id="bomForm">
@@ -1137,7 +782,6 @@ async function admTestEmail() {
                 </form>
             </div>
 
-            <!-- Multi Keywords -->
             <div class="tab-pane fade {% if request.args.get('tab')=='multi' %}show active{% endif %}"
                  id="pane-multi" role="tabpanel">
                 <form method="post" action="/search" id="multiForm">
@@ -1173,7 +817,6 @@ async function admTestEmail() {
         </div>
     </div>
 
-    <!-- ═══════════ ACTIVE KEYWORDS ═══════════ -->
     {% if active_keywords and active_keywords|length > 0 %}
     <div class="kw-strip">
         <i class="bi bi-tags text-primary" style="font-size:.85rem;"></i>
@@ -1191,7 +834,6 @@ async function admTestEmail() {
     </div>
     {% endif %}
 
-    <!-- ═══════════ INDUSTRY FILTER ═══════════ -->
     {% if cves and cves|length > 0 %}
     <div class="industry-bar">
         <span class="label"><i class="bi bi-buildings me-1"></i>Industry:</span>
@@ -1227,7 +869,6 @@ async function admTestEmail() {
     </div>
     {% endif %}
 
-    <!-- ═══════════ RESULTS HEADER ═══════════ -->
     <div class="results-header">
         <div>
             <div class="results-title">
@@ -1254,7 +895,6 @@ async function admTestEmail() {
         {% endif %}
     </div>
 
-    <!-- ═══════════ TABLE ═══════════ -->
     {% if cves and cves|length > 0 %}
     <div class="table-wrap">
         <div class="table-scroll">
@@ -1296,7 +936,6 @@ async function admTestEmail() {
 
                 <tr data-industries="{{ inds|join(',') if inds else 'unknown' }}"
                     data-cve-id="{{ cve.cve_id }}">
-                    <!-- CVE ID -->
                     <td class="col-id">
                         <a href="https://nvd.nist.gov/vuln/detail/{{ cve.cve_id }}"
                            target="_blank" class="cve-link">{{ cve.cve_id }}</a>
@@ -1309,7 +948,6 @@ async function admTestEmail() {
                         </div>
                         {% endif %}
                     </td>
-                    <!-- CVSS -->
                     <td class="col-cvss" style="text-align:center;">
                         {% if cve.cvss_score %}
                         <span class="cvss-val {%- if cve.cvss_score|float>=9 %} crit{%- elif cve.cvss_score|float>=7 %} high{%- elif cve.cvss_score|float>=4 %} med{%- else %} low{%- endif %}">
@@ -1317,22 +955,18 @@ async function admTestEmail() {
                         </span>
                         {% else %}<span style="color:#9ca3af;">N/A</span>{% endif %}
                     </td>
-                    <!-- Severity -->
                     <td class="col-sev">
                         <span class="sev-badge {{ cve.severity or 'Unknown' }}">{{ cve.severity or 'Unknown' }}</span>
                     </td>
-                    <!-- Date -->
                     <td class="col-date" style="color:var(--text-muted);font-family:var(--mono);font-size:.7rem;">
                         {{ cve.published_date[:10] if cve.published_date else 'N/A' }}
                     </td>
-                    <!-- Description -->
                     <td class="col-desc">
                         <div class="cell-scroll">
                             <div class="desc-box">{{ cve.description or 'No description available' }}</div>
                         </div>
                     </td>
                     {% if use_ai %}
-                    <!-- AI Summary (lazy) -->
                     <td class="col-ai" id="ai-sum-{{ cve.cve_id|replace('-','_') }}">
                         <div class="cell-scroll">
                             {%- set bad = ['information not available','no ai summary available','ai analysis unavailable',''] -%}
@@ -1347,7 +981,6 @@ async function admTestEmail() {
                         </div>
                     </td>
                     {% endif %}
-                    <!-- Affected Version (lazy) -->
                     <td class="col-ver" style="text-align:center;" id="ai-ver-{{ cve.cve_id|replace('-','_') }}">
                         {% if cve.affected_version and cve.affected_version not in ['Unknown','','None'] %}
                         <span class="ver-badge">{{ cve.affected_version }}</span>
@@ -1355,7 +988,6 @@ async function admTestEmail() {
                         <span class="text-muted ai-pending" style="font-size:.7rem;">—</span>
                         {% endif %}
                     </td>
-                    <!-- Fix Status (lazy) -->
                     <td class="col-status" id="ai-fix-{{ cve.cve_id|replace('-','_') }}">
                         {%- set fs = cve.fix_status or 'Unknown' -%}
                         {%- set fsl = fs|lower -%}
@@ -1372,7 +1004,6 @@ async function admTestEmail() {
                         <span class="fixed-in"><i class="bi bi-tag me-1"></i>{{ cve.fixed_version }}</span>
                         {% endif %}
                     </td>
-                    <!-- Remediation (lazy) -->
                     <td class="col-rem" id="ai-rem-{{ cve.cve_id|replace('-','_') }}">
                         <div class="cell-scroll">
                             {%- set badr = ['information not available','no remediation information available','no remediation info yet',''] -%}
@@ -1386,7 +1017,6 @@ async function admTestEmail() {
                             {% endif %}
                         </div>
                     </td>
-                    <!-- Industry -->
                     <td class="col-ind">
                         <div class="cell-scroll" style="max-height:75px;">
                             {% if inds %}
@@ -1398,7 +1028,6 @@ async function admTestEmail() {
                             {% else %}<span style="color:#9ca3af;font-size:.7rem;">—</span>{% endif %}
                         </div>
                     </td>
-                    <!-- Companies -->
                     <td class="col-comp">
                         <div class="cell-scroll" style="max-height:75px;">
                             {% if cve.affected_companies and cve.affected_companies|length > 0 %}
@@ -1410,7 +1039,6 @@ async function admTestEmail() {
                             {% else %}<span style="color:#9ca3af;">—</span>{% endif %}
                         </div>
                     </td>
-                    <!-- Matched -->
                     <td class="col-match">
                         <div class="cell-scroll" style="max-height:75px;">
                             {% if cve.matched_keywords and cve.matched_keywords|length > 0 %}
@@ -1427,7 +1055,6 @@ async function admTestEmail() {
         </div>
     </div>
 
-    <!-- Pagination -->
     {% if total_pages and total_pages > 1 %}
     <nav class="mt-3">
         <ul class="pagination justify-content-center">
@@ -1465,9 +1092,8 @@ async function admTestEmail() {
     </div>
     {% endif %}
 
-</div><!-- /app-body -->
+</div>
 
-<!-- Spinner -->
 <div class="spinner-overlay" id="spinnerOverlay">
     <div class="spinner-box">
         <div class="spinner-border text-primary mb-3" style="width:2rem;height:2rem;" role="status"></div>
@@ -1478,9 +1104,6 @@ async function admTestEmail() {
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-// ═══════════════════════════════════════════════════════
-//  Constants from Jinja
-// ═══════════════════════════════════════════════════════
 const PAGE_KEYWORDS = {{ active_keywords | tojson }};
 const PAGE_SEVERITY = {{ severity_filter | tojson }};
 const AI_ON         = {{ 'true' if use_ai else 'false' }};
@@ -1489,21 +1112,27 @@ const PROVIDER_COLORS = { deepseek:'#34d399', openai:'#a78bfa', claude:'#f97316'
 const PROVIDER_LABELS = { deepseek:'DeepSeek', openai:'OpenAI', claude:'Claude', ollama:'Ollama (Local)' };
 
 // ═══════════════════════════════════════════════════════
-//  STATS — fetch /stats and populate all cards + banner
+//  STATS — FIXED VERSION
 // ═══════════════════════════════════════════════════════
 async function loadStats() {
     try {
         const r = await fetch('/stats');
-        if (!r.ok) return;
+        if (!r.ok) {
+            console.error('Stats fetch failed:', r.status);
+            return;
+        }
         const d = await r.json();
+        console.log('Stats received:', d);
 
-        // Date range card
+        // Date range
         const dateEl = document.getElementById('dateRange');
-        if (dateEl && d.oldest_cve && d.newest_cve) {
+        if (dateEl && d.date_range) {
+            dateEl.textContent = d.date_range;
+        } else if (dateEl && d.oldest_cve && d.newest_cve) {
             dateEl.textContent = `${d.oldest_cve.slice(0,10)} – ${d.newest_cve.slice(0,10)}`;
         }
 
-        // NEW (7 Days) card
+        // NEW (7 Days)
         const newEl = document.getElementById('new7Days');
         if (newEl) newEl.textContent = (d.new_7_days || 0).toLocaleString();
 
@@ -1513,16 +1142,20 @@ async function loadStats() {
 
         // Update banner
         const banner = document.getElementById('bannerText');
-        if (banner && d.last_update) {
-            banner.textContent = `Daily updates run at 2:00 AM UTC. Last update: ${d.last_update}`;
-        } else if (banner) {
-            banner.textContent = 'Daily updates run at 2:00 AM UTC. Last update: never (run one now)';
+        if (banner) {
+            if (d.last_update) {
+                banner.textContent = `Daily updates run at 2:00 AM UTC. Last update: ${d.last_update}`;
+            } else {
+                banner.textContent = 'Daily updates run at 2:00 AM UTC. Last update: never (run one now)';
+            }
         }
-    } catch(e) { console.warn('stats error', e); }
+    } catch(e) {
+        console.error('Stats error:', e);
+    }
 
-    // Keyword-aware severity counts
+    // Keyword-aware stats
     try {
-        const kw  = PAGE_KEYWORDS.join(',');
+        const kw = PAGE_KEYWORDS.join(',');
         const sev = PAGE_SEVERITY || '';
         const url = kw
             ? `/keyword-stats?keywords=${encodeURIComponent(kw)}&severity=${encodeURIComponent(sev)}`
@@ -1531,11 +1164,11 @@ async function loadStats() {
         if (!r.ok) return;
         const d = await r.json();
 
-        // Update total CVEs
+        // Total CVEs
         const totalEl = document.getElementById('totalCves');
         if (totalEl) totalEl.textContent = (d.total || 0).toLocaleString();
 
-        // Update severity counts - using correct IDs
+        // Severity counts
         const critEl = document.getElementById('cntCrit');
         if (critEl) critEl.textContent = (d.critical || 0).toLocaleString();
 
@@ -1548,11 +1181,11 @@ async function loadStats() {
         const lowEl = document.getElementById('cntLow');
         if (lowEl) lowEl.textContent = (d.low || 0).toLocaleString();
 
-        // Update context label
-        const ctx  = document.getElementById('statsCtx');
+        // Context label
+        const ctx = document.getElementById('statsCtx');
         const card = document.getElementById('totalCard');
         if (d.filtered && kw) {
-            const kwList = kw.split(',').map(k=>k.trim()).filter(Boolean);
+            const kwList = kw.split(',').map(k => k.trim()).filter(Boolean);
             if (ctx) {
                 ctx.textContent = kwList.length === 1 ? `for "${kwList[0]}"` : `for ${kwList.length} keywords`;
                 ctx.style.display = 'inline';
@@ -1566,7 +1199,9 @@ async function loadStats() {
             if (totalLabel) totalLabel.textContent = 'Total CVEs';
             if (card) card.style.borderLeft = '';
         }
-    } catch(e) { console.warn('keyword-stats error', e); }
+    } catch(e) {
+        console.error('Keyword stats error:', e);
+    }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1587,21 +1222,23 @@ async function loadKeywordCounts() {
             const n = counts[keyword] ?? 0;
             el.textContent = n.toLocaleString();
             el.title = `${n.toLocaleString()} CVEs match "${keyword}"`;
-            el.style.background = n===0 ? 'rgba(220,38,38,.12)' : n<10 ? 'rgba(217,119,6,.12)' : n<100 ? 'rgba(2,132,199,.12)' : 'rgba(5,122,85,.12)';
-            el.style.color      = n===0 ? '#b91c1c' : n<10 ? '#92400e' : n<100 ? '#0369a1' : '#065f46';
         });
-    } catch(e) { console.warn('keyword counts error', e); }
+    } catch(e) {
+        console.error('Keyword counts error:', e);
+    }
 }
 
 // ═══════════════════════════════════════════════════════
-//  INDUSTRY COUNTS + FILTER
+//  INDUSTRY COUNTS
 // ═══════════════════════════════════════════════════════
 function countIndustries() {
-    const rows   = document.querySelectorAll('#cveTableBody tr');
+    const rows = document.querySelectorAll('#cveTableBody tr');
     const counts = {all:0, automotive:0, it:0, iot:0, industrial:0, telecom:0, medical:0};
     rows.forEach(r => {
         counts.all++;
-        (r.dataset.industries||'').split(',').forEach(i => { if(counts[i]!==undefined) counts[i]++; });
+        (r.dataset.industries || '').split(',').forEach(i => {
+            if (counts[i] !== undefined) counts[i]++;
+        });
     });
     Object.keys(counts).forEach(k => {
         const el = document.getElementById(`cnt-${k}`);
@@ -1614,7 +1251,7 @@ function filterInd(ind, btn) {
     btn.classList.add('active');
     let vis = 0;
     document.querySelectorAll('#cveTableBody tr').forEach(r => {
-        const show = ind === 'all' || (r.dataset.industries||'').split(',').includes(ind);
+        const show = ind === 'all' || (r.dataset.industries || '').split(',').includes(ind);
         r.classList.toggle('hidden-row', !show);
         if (show) vis++;
     });
@@ -1634,11 +1271,11 @@ async function triggerUpdate() {
     if (_updateRunning) return;
     _updateRunning = true;
 
-    const btn          = document.getElementById('updateBtn');
-    const icon         = document.getElementById('updateIcon');
-    const bannerBtn    = document.getElementById('bannerRefreshBtn');
-    const bannerIcon   = document.getElementById('bannerRefreshIcon');
-    const bannerText   = document.getElementById('bannerText');
+    const btn = document.getElementById('updateBtn');
+    const icon = document.getElementById('updateIcon');
+    const bannerBtn = document.getElementById('bannerRefreshBtn');
+    const bannerIcon = document.getElementById('bannerRefreshIcon');
+    const bannerText = document.getElementById('bannerText');
 
     btn.disabled = true;
     icon.className = 'bi bi-arrow-clockwise';
@@ -1649,20 +1286,17 @@ async function triggerUpdate() {
 
     try {
         const r = await fetch('/update-cve', {
-            method:      'POST',
+            method: 'POST',
             credentials: 'include',
-            headers:     { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-            body:        JSON.stringify({ csrf_token: '{{ csrf_token }}' }),
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({ csrf_token: '{{ csrf_token }}' }),
         });
-        // Update started in background — poll stats after a delay
         bannerText.textContent = 'Update running in background… refreshing stats in 15s';
-
         setTimeout(async () => {
             await loadStats();
             bannerText.textContent = 'Update complete. Stats refreshed.';
             setTimeout(() => loadStats(), 0);
         }, 15000);
-
     } catch(e) {
         bannerText.textContent = 'Update request failed. Check /api/nvd-status for details.';
     } finally {
@@ -1681,7 +1315,7 @@ async function triggerUpdate() {
 //  AI TOGGLE
 // ═══════════════════════════════════════════════════════
 function toggleAI() {
-    const on  = document.getElementById('aiToggle').checked;
+    const on = document.getElementById('aiToggle').checked;
     const url = new URL(window.location.href);
     url.searchParams.set('use_ai', on ? 'true' : 'false');
     url.searchParams.delete('page');
@@ -1715,7 +1349,7 @@ function togglePanel(e) {
 }
 document.addEventListener('click', e => {
     const panel = document.getElementById('aiPanel');
-    const btn   = document.getElementById('providerBtn');
+    const btn = document.getElementById('providerBtn');
     if (panel && !panel.contains(e.target) && !btn.contains(e.target))
         panel.classList.remove('open');
 });
@@ -1725,13 +1359,13 @@ function selectProvider(el) { activateOpt(el, true); }
 function activateOpt(el, reset) {
     document.querySelectorAll('.prov-opt').forEach(o => o.classList.remove('active'));
     el.classList.add('active');
-    const p      = el.dataset.provider;
-    const isOll  = p === 'ollama';
+    const p = el.dataset.provider;
+    const isOll = p === 'ollama';
     const keyRow = document.getElementById('keyRow');
     const keyInp = document.getElementById('apiKeyInput');
     keyRow.style.opacity = isOll ? '0.4' : '1';
-    keyInp.disabled      = isOll;
-    keyInp.placeholder   = isOll ? 'No API key needed' : (el.dataset.placeholder || 'API key');
+    keyInp.disabled = isOll;
+    keyInp.placeholder = isOll ? 'No API key needed' : (el.dataset.placeholder || 'API key');
     if (reset && !isOll) keyInp.value = '';
     fillModels(el, getSaved().model || '');
     updatePill(p);
@@ -1740,7 +1374,7 @@ function activateOpt(el, reset) {
 
 function fillModels(el, selected) {
     const models = JSON.parse(el.dataset.models || '[]');
-    const sel    = document.getElementById('modelSel');
+    const sel = document.getElementById('modelSel');
     sel.innerHTML = '';
     models.forEach(m => {
         const o = document.createElement('option');
@@ -1760,7 +1394,7 @@ function updatePill(p) {
 function toggleEye() {
     const inp = document.getElementById('apiKeyInput');
     const ico = document.getElementById('eyeIcon');
-    inp.type  = inp.type === 'password' ? 'text' : 'password';
+    inp.type = inp.type === 'password' ? 'text' : 'password';
     ico.className = inp.type === 'password' ? 'bi bi-eye' : 'bi bi-eye-slash';
 }
 
@@ -1771,14 +1405,14 @@ function clearTest() {
 
 async function applySettings() {
     const provider = document.querySelector('.prov-opt.active')?.dataset.provider || 'deepseek';
-    const api_key  = document.getElementById('apiKeyInput').value.trim();
-    const model    = document.getElementById('modelSel').value;
-    const btn      = document.getElementById('applyBtn');
-    const res      = document.getElementById('testResult');
+    const api_key = document.getElementById('apiKeyInput').value.trim();
+    const model = document.getElementById('modelSel').value;
+    const btn = document.getElementById('applyBtn');
+    const res = document.getElementById('testResult');
 
     if (provider !== 'ollama' && !api_key) {
         res.textContent = '⚠ Please enter your API key';
-        res.className   = 'test-result err';
+        res.className = 'test-result err';
         return;
     }
 
@@ -1789,25 +1423,25 @@ async function applySettings() {
 
     try {
         const r = await fetch('/settings/save', {
-            method:      'POST',
+            method: 'POST',
             credentials: 'include',
-            headers:     { 'Content-Type': 'application/json' },
-            body:        JSON.stringify({ provider, api_key, model }),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, api_key, model }),
         });
         const d = await r.json();
         if (d.ok) {
             res.textContent = '✓ ' + d.message;
-            res.className   = 'test-result ok';
+            res.className = 'test-result ok';
             saveSetting(provider, api_key, model);
             updatePill(provider);
             setTimeout(() => { document.getElementById('aiPanel').classList.remove('open'); clearTest(); }, 2000);
         } else {
             res.textContent = '✗ ' + d.message;
-            res.className   = 'test-result err';
+            res.className = 'test-result err';
         }
     } catch(e) {
         res.textContent = '✗ Network error';
-        res.className   = 'test-result err';
+        res.className = 'test-result err';
     }
     btn.disabled = false;
     document.getElementById('applyText').innerHTML = '<i class="bi bi-check-lg me-1"></i>Apply &amp; Test';
@@ -1870,10 +1504,10 @@ async function runLazyAI() {
     const pending = collectPending();
     if (!pending.length) return;
 
-    const bar   = document.getElementById('aiProgressBar');
-    const fill  = document.getElementById('aiProgressFill');
+    const bar = document.getElementById('aiProgressBar');
+    const fill = document.getElementById('aiProgressFill');
     const toast = document.getElementById('aiToast');
-    const txt   = document.getElementById('aiToastText');
+    const txt = document.getElementById('aiToastText');
 
     bar.style.display = 'block';
     toast.classList.add('show');
@@ -1901,7 +1535,7 @@ async function runLazyAI() {
     }
 
     fill.style.width = '100%';
-    txt.textContent  = `✓ AI analysis complete (${tot} CVEs)`;
+    txt.textContent = `✓ AI analysis complete (${tot} CVEs)`;
     setTimeout(() => { bar.style.display='none'; fill.style.width='0%'; toast.classList.remove('show'); }, 2500);
 }
 
@@ -1909,7 +1543,7 @@ async function runLazyAI() {
 //  KEYWORD REMOVE
 // ═══════════════════════════════════════════════════════
 function removeKeyword(kw) {
-    const p   = new URLSearchParams(window.location.search);
+    const p = new URLSearchParams(window.location.search);
     const enc = p.get('kw') || '';
     let kwList = [];
     if (enc) {
@@ -1930,9 +1564,6 @@ function removeKeyword(kw) {
     }
 }
 
-// ═══════════════════════════════════════════════════════
-//  MISC
-// ═══════════════════════════════════════════════════════
 function showLoading() {
     const el = document.getElementById('spinnerOverlay');
     if (el) { el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),30000); }
@@ -1940,9 +1571,9 @@ function showLoading() {
 
 function initBomUpload() {
     const input = document.getElementById('bomFile');
-    const form  = document.getElementById('bomForm');
-    const zone  = document.getElementById('uploadZone');
-    const lbl   = document.getElementById('uploadLabel');
+    const form = document.getElementById('bomForm');
+    const zone = document.getElementById('uploadZone');
+    const lbl = document.getElementById('uploadLabel');
     if (!input||!form||!zone) return;
 
     input.addEventListener('change', function() {
@@ -1954,8 +1585,8 @@ function initBomUpload() {
 
     ['dragenter','dragover','dragleave','drop'].forEach(ev =>
         zone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); }));
-    zone.addEventListener('dragover',  ()=>zone.style.borderColor='var(--primary)');
-    zone.addEventListener('dragleave', ()=>zone.style.borderColor='#93c5fd');
+    zone.addEventListener('dragover', () => zone.style.borderColor='var(--primary)');
+    zone.addEventListener('dragleave', () => zone.style.borderColor='#93c5fd');
     zone.addEventListener('drop', e => {
         zone.style.borderColor = '#93c5fd';
         const files = e.dataTransfer.files;
@@ -1976,17 +1607,14 @@ document.addEventListener('DOMContentLoaded', () => {
     countIndustries();
     initBomUpload();
 
-    // Lazy AI after paint
     setTimeout(runLazyAI, 700);
 
-    // Activate correct tab
     const tab = new URLSearchParams(window.location.search).get('tab');
     if (tab) {
         const el = document.getElementById(`tab-${tab}`);
         if (el) bootstrap.Tab.getOrCreateInstance(el).show();
     }
 
-    // Show error from URL
     const err = new URLSearchParams(window.location.search).get('error');
     if (err) {
         const div = document.createElement('div');
@@ -1996,7 +1624,6 @@ document.addEventListener('DOMContentLoaded', () => {
         document.querySelector('.app-body').prepend(div);
     }
 
-    // Show update-started toast
     if (new URLSearchParams(window.location.search).get('update') === 'started') {
         const div = document.createElement('div');
         div.className = 'alert alert-success alert-dismissible fade show mb-3';
@@ -2006,7 +1633,6 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => { loadStats(); }, 15000);
     }
 
-    // Form validation
     document.getElementById('singleForm')?.addEventListener('submit', e => {
         const kw = e.target.querySelector('input[name="keyword"]');
         if (kw && !kw.value.trim()) { e.preventDefault(); return; }
@@ -2019,7 +1645,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 </script>
-{% endif %}{# end view check #}
 
 </body>
 </html>
