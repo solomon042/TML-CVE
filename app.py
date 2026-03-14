@@ -1248,8 +1248,9 @@ def stats():
 
 
 @app.route("/keyword-stats")
+@app.route("/keyword-stats")
 def keyword_stats():
-    """Severity counts optionally filtered by keywords."""
+    """Return total + severity breakdown, filtered by keywords if provided."""
     keywords_raw = request.args.get("keywords", "")
     severity     = request.args.get("severity", "")
     keywords     = [k.strip() for k in keywords_raw.split(',') if k.strip()] if keywords_raw else []
@@ -1258,67 +1259,39 @@ def keyword_stats():
         conn   = get_db_connection()
         cursor = conn.cursor()
 
-        base_where = ""
-        params     = []
-
+        # Build keyword filter
         if keywords:
-            conds = ["description LIKE ?" for _ in keywords]
-            base_where = "WHERE (" + " OR ".join(conds) + ")"
-            params     = [f"%{kw}%" for kw in keywords]
-            if severity == "Critical":
-                base_where += " AND cvss_score >= 9.0"
-            elif severity == "High":
-                base_where += " AND cvss_score >= 7.0 AND cvss_score < 9.0"
-            elif severity == "Medium":
-                base_where += " AND cvss_score >= 4.0 AND cvss_score < 7.0"
-            elif severity == "Low":
-                base_where += " AND cvss_score > 0 AND cvss_score < 4.0"
+            kw_conds  = " OR ".join(["description LIKE ?" for _ in keywords])
+            kw_where  = f"WHERE ({kw_conds})"
+            kw_params = [f"%{kw}%" for kw in keywords]
+        else:
+            kw_where  = ""
+            kw_params = []
 
-        cursor.execute(f"SELECT COUNT(*) FROM cves {base_where}", params)
-        total = cursor.fetchone()[0]
+        # Build severity filter on top
+        sev_clause = ""
+        if severity == "Critical":
+            sev_clause = f" {'AND' if kw_where else 'WHERE'} cvss_score >= 9.0"
+        elif severity == "High":
+            sev_clause = f" {'AND' if kw_where else 'WHERE'} cvss_score >= 7.0 AND cvss_score < 9.0"
+        elif severity == "Medium":
+            sev_clause = f" {'AND' if kw_where else 'WHERE'} cvss_score >= 4.0 AND cvss_score < 7.0"
+        elif severity == "Low":
+            sev_clause = f" {'AND' if kw_where else 'WHERE'} cvss_score > 0 AND cvss_score < 4.0"
 
-        p = params.copy()
-        cursor.execute(
-            f"SELECT COUNT(*) FROM cves {base_where} {'AND' if base_where else 'WHERE'} cvss_score >= 9.0",
-            p + ([] if not base_where.endswith("9.0") else [])
-        )
-        # Simpler approach: run 4 separate filtered queries
-        def sev_count(min_s, max_s):
-            if base_where:
-                q = f"SELECT COUNT(*) FROM cves {base_where} AND cvss_score >= ? AND cvss_score < ?"
-            else:
-                q = "SELECT COUNT(*) FROM cves WHERE cvss_score >= ? AND cvss_score < ?"
-            cursor.execute(q, params + [min_s, max_s])
+        full_where = kw_where + sev_clause
+        sep        = "AND" if kw_where else "WHERE"
+
+        def count(extra=""):
+            q = f"SELECT COUNT(*) FROM cves {full_where} {extra}"
+            cursor.execute(q, kw_params)
             return cursor.fetchone()[0]
 
-        def sev_count_ge(min_s):
-            if base_where:
-                q = f"SELECT COUNT(*) FROM cves {base_where} AND cvss_score >= ?"
-            else:
-                q = "SELECT COUNT(*) FROM cves WHERE cvss_score >= ?"
-            cursor.execute(q, params + [min_s])
-            return cursor.fetchone()[0]
-
-        def sev_count_range(min_s, max_s, gt=False):
-            op = ">" if gt else ">="
-            if base_where:
-                q = f"SELECT COUNT(*) FROM cves {base_where} AND cvss_score {op} ? AND cvss_score < ?"
-            else:
-                q = f"SELECT COUNT(*) FROM cves WHERE cvss_score {op} ? AND cvss_score < ?"
-            cursor.execute(q, params + [min_s, max_s])
-            return cursor.fetchone()[0]
-
-        critical = sev_count_ge(9.0) if not keywords else sev_count_range(9.0, 99.9)
-        # recompute properly
-        crit_q  = (f"SELECT COUNT(*) FROM cves {base_where} {'AND' if base_where else 'WHERE'} cvss_score >= 9.0") if base_where else "SELECT COUNT(*) FROM cves WHERE cvss_score >= 9.0"
-        high_q  = (f"SELECT COUNT(*) FROM cves {base_where} {'AND' if base_where else 'WHERE'} cvss_score >= 7.0 AND cvss_score < 9.0") if base_where else "SELECT COUNT(*) FROM cves WHERE cvss_score >= 7.0 AND cvss_score < 9.0"
-        med_q   = (f"SELECT COUNT(*) FROM cves {base_where} {'AND' if base_where else 'WHERE'} cvss_score >= 4.0 AND cvss_score < 7.0") if base_where else "SELECT COUNT(*) FROM cves WHERE cvss_score >= 4.0 AND cvss_score < 7.0"
-        low_q   = (f"SELECT COUNT(*) FROM cves {base_where} {'AND' if base_where else 'WHERE'} cvss_score > 0 AND cvss_score < 4.0") if base_where else "SELECT COUNT(*) FROM cves WHERE cvss_score > 0 AND cvss_score < 4.0"
-
-        cursor.execute(crit_q, params); critical = cursor.fetchone()[0]
-        cursor.execute(high_q, params); high     = cursor.fetchone()[0]
-        cursor.execute(med_q,  params); medium   = cursor.fetchone()[0]
-        cursor.execute(low_q,  params); low      = cursor.fetchone()[0]
+        total    = count()
+        critical = count(f"{sep} cvss_score >= 9.0")
+        high     = count(f"{sep} cvss_score >= 7.0 AND cvss_score < 9.0")
+        medium   = count(f"{sep} cvss_score >= 4.0 AND cvss_score < 7.0")
+        low      = count(f"{sep} cvss_score > 0 AND cvss_score < 4.0")
         conn.close()
 
         return jsonify({
@@ -1331,7 +1304,8 @@ def keyword_stats():
         })
     except Exception as e:
         print(f"❌ /keyword-stats error: {e}")
-        return jsonify({"total":0,"critical":0,"high":0,"medium":0,"low":0,"filtered":False})
+        import traceback; traceback.print_exc()
+        return jsonify({"total": 0, "critical": 0, "high": 0, "medium": 0, "low": 0, "filtered": False})
 
 
 @app.route("/keyword-counts")
