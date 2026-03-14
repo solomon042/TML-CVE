@@ -347,6 +347,54 @@ def send_email_alert(to_email, subject, html_content):
         print(f"❌ Email send failed: {e}")
         return False
 
+def get_keyword_statistics(keywords):
+    """Get statistics for keywords from SQLite database"""
+    stats = {}
+    try:
+        conn = sqlite3.connect(DB)
+        cursor = conn.cursor()
+        
+        for keyword in keywords:
+            cursor.execute("""
+                SELECT COUNT(*) FROM cves 
+                WHERE LOWER(description) LIKE LOWER(?)
+            """, (f'%{keyword}%',))
+            total = cursor.fetchone()[0]
+            
+            cursor.execute("""
+                SELECT 
+                    SUM(CASE WHEN cvss_score >= 9.0 THEN 1 ELSE 0 END) as critical,
+                    SUM(CASE WHEN cvss_score >= 7.0 AND cvss_score < 9.0 THEN 1 ELSE 0 END) as high,
+                    SUM(CASE WHEN cvss_score >= 4.0 AND cvss_score < 7.0 THEN 1 ELSE 0 END) as medium,
+                    SUM(CASE WHEN cvss_score > 0 AND cvss_score < 4.0 THEN 1 ELSE 0 END) as low
+                FROM cves 
+                WHERE LOWER(description) LIKE LOWER(?)
+            """, (f'%{keyword}%',))
+            sev = cursor.fetchone()
+            
+            cursor.execute("""
+                SELECT COUNT(*) FROM cves 
+                WHERE LOWER(description) LIKE LOWER(?)
+                AND julianday('now') - julianday(published) <= 7
+            """, (f'%{keyword}%',))
+            new_count = cursor.fetchone()[0]
+            
+            stats[keyword] = {
+                'total': total,
+                'critical': sev[0] or 0,
+                'high': sev[1] or 0,
+                'medium': sev[2] or 0,
+                'low': sev[3] or 0,
+                'new': new_count
+            }
+        
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ Could not fetch keyword stats: {e}")
+    
+    return stats
+
 def send_bom_alert(email, bom_name, keywords, matches):
     """Send formatted email for BOM matches"""
     subject = f"🚨 CVE Alert: {len(matches)} new vulnerabilities match your BOM '{bom_name}'"
@@ -491,22 +539,6 @@ def _run_nvd_update(user_key):
                     conn.close()
                     return
 
-                if resp.status_code == 404:
-                    _retry_404 = getattr(_run_nvd_update, "_retry_404", 0)
-                    _run_nvd_update._retry_404 = _retry_404 + 1
-                    if _run_nvd_update._retry_404 <= 3:
-                        wait = 30 * _run_nvd_update._retry_404
-                        _log(f"NVD returned 404 (attempt {_run_nvd_update._retry_404}/3) — waiting {wait}s then retrying...")
-                        time.sleep(wait)
-                        continue
-                    _run_nvd_update._retry_404 = 0
-                    _log("NVD API 404 after 3 retries — service may be down, try again in a few minutes")
-                    with _nvd_lock:
-                        _nvd_job.update({"done": True, "success": False,
-                            "status": "NVD API 404 after retries — try again in a few minutes"})
-                    conn.close()
-                    return
-
                 if resp.status_code != 200:
                     msg = f"NVD HTTP {resp.status_code}: {resp.text[:80]}"
                     _log(msg)
@@ -545,31 +577,19 @@ def _run_nvd_update(user_key):
                             break
 
                     published = cve_data.get("published", "")[:10]
-                    last_modified = cve_data.get("lastModified", "")[:10]
-
-                    cwe_id = ""
-                    for w in cve_data.get("weaknesses", []):
-                        for d in w.get("description", []):
-                            if d.get("lang") == "en":
-                                cwe_id = d.get("value", "")
-                                break
-
-                    refs = [r.get("url", "") for r in cve_data.get("references", [])[:5]]
 
                     cursor.execute("SELECT cve_id FROM cves WHERE cve_id=?", (cve_id,))
                     if cursor.fetchone():
                         cursor.execute("""
-                            UPDATE cves SET description=?,cvss_score=?,published=?,
-                            last_modified=?,cwe_id=?,"references"=? WHERE cve_id=?
-                        """, (desc, cvss, published, last_modified, cwe_id, json.dumps(refs), cve_id))
+                            UPDATE cves SET description=?,cvss_score=?,published=?
+                            WHERE cve_id=?
+                        """, (desc, cvss, published, cve_id))
                         updated += 1
                     else:
                         cursor.execute("""
-                            INSERT INTO cves
-                              (cve_id,description,cvss_score,published,
-                               last_modified,cwe_id,"references")
-                            VALUES (?,?,?,?,?,?,?)
-                        """, (cve_id, desc, cvss, published, last_modified, cwe_id, json.dumps(refs)))
+                            INSERT INTO cves (cve_id, description, cvss_score, published)
+                            VALUES (?, ?, ?, ?)
+                        """, (cve_id, desc, cvss, published))
                         added += 1
 
                 conn.commit()
@@ -584,7 +604,7 @@ def _run_nvd_update(user_key):
                 continue
 
         conn.close()
-        msg = f"Done — {added:,} added, {updated:,} updated (last 180 days)"
+        msg = f"Done — {added:,} added, {updated:,} updated"
         _log(f"✅ {msg}", progress=100)
         with _nvd_lock:
             _nvd_job.update({"done": True, "success": True, "status": msg,
@@ -629,7 +649,7 @@ def api_nvd_status():
     return jsonify(job)
 
 # ============================================================
-# DAILY CVE UPDATE FUNCTION
+# DAILY CVE UPDATE FUNCTION - FIXED VERSION
 # ============================================================
 
 NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
@@ -637,7 +657,9 @@ NVD_API_KEY = os.environ.get("NVD_API_KEY", "")
 
 def fetch_new_cves_from_nvd():
     """Fetch CVEs from last 24 hours and update database"""
+    print(f"🔄 {'='*50}")
     print(f"🔄 [{datetime.now()}] Starting daily CVE update...")
+    print(f"🔄 {'='*50}")
     
     end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=1)
@@ -645,9 +667,14 @@ def fetch_new_cves_from_nvd():
     pub_start = start_date.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
     pub_end = end_date.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
     
+    print(f"📅 Fetching CVEs from {pub_start} to {pub_end}")
+    
     headers = {"User-Agent": "CVE-Dashboard/1.0"}
     if NVD_API_KEY:
         headers["apiKey"] = NVD_API_KEY
+        print(f"🔑 Using NVD API Key (rate limit: 50 req/30s)")
+    else:
+        print(f"⚠️ No NVD API Key - rate limit: 5 req/30s")
     
     new_cves = []
     
@@ -658,22 +685,39 @@ def fetch_new_cves_from_nvd():
             "resultsPerPage": 2000
         }
         
+        print(f"📡 Calling NVD API...")
         response = requests.get(NVD_API_URL, params=params, headers=headers, timeout=30)
         
         if response.status_code == 200:
             data = response.json()
+            total_results = data.get("totalResults", 0)
             vulnerabilities = data.get("vulnerabilities", [])
+            
+            print(f"📊 NVD API Response: totalResults={total_results}, returned={len(vulnerabilities)}")
+            
+            if total_results == 0:
+                print(f"✅ No new CVEs published in the last 24 hours")
+                return
             
             print(f"📥 Found {len(vulnerabilities)} CVEs published in last 24 hours")
             
             conn = get_db_connection()
             cursor = conn.cursor()
             
+            # Get existing CVE IDs for quick lookup
+            cursor.execute("SELECT cve_id FROM cves")
+            existing_cves = {row[0] for row in cursor.fetchall()}
+            print(f"📊 Database currently has {len(existing_cves):,} CVEs")
+            
             for item in vulnerabilities:
                 cve_data = item.get("cve", {})
                 cve_id = cve_data.get("id", "")
                 
                 if not cve_id:
+                    continue
+                
+                # Skip if already exists
+                if cve_id in existing_cves:
                     continue
                 
                 descs = cve_data.get("descriptions", [])
@@ -693,42 +737,46 @@ def fetch_new_cves_from_nvd():
                 
                 companies = extract_affected_companies(desc)
                 
-                cursor.execute("SELECT cve_id FROM cves WHERE cve_id = ?", (cve_id,))
-                exists = cursor.fetchone()
+                # Insert new CVE
+                cursor.execute("""
+                    INSERT INTO cves (cve_id, description, cvss_score, published)
+                    VALUES (?, ?, ?, ?)
+                """, (cve_id, desc, cvss, published))
                 
-                if not exists:
-                    cursor.execute("""
-                        INSERT INTO cves (cve_id, description, cvss_score, published)
-                        VALUES (?, ?, ?, ?)
-                    """, (cve_id, desc, cvss, published))
-                    
-                    new_cves.append({
-                        "cve_id": cve_id,
-                        "description": desc,
-                        "cvss_score": cvss,
-                        "severity": calculate_severity(cvss),
-                        "published": published,
-                        "companies": companies
-                    })
-                    
-                    print(f"🆕 New CVE added: {cve_id}")
+                new_cves.append({
+                    "cve_id": cve_id,
+                    "description": desc,
+                    "cvss_score": cvss,
+                    "severity": calculate_severity(cvss),
+                    "published": published,
+                    "companies": companies
+                })
+                
+                print(f"🆕 New CVE added: {cve_id}")
             
             conn.commit()
             conn.close()
             
+            print(f"✅ Added {len(new_cves)} new CVEs to database")
+            
             if new_cves and postgres_pool:
                 update_cve_tracking(new_cves)
+                print(f"📝 Updated PostgreSQL tracking for {len(new_cves)} CVEs")
             
             if new_cves:
                 check_boms_and_send_alerts(new_cves)
+                print(f"📧 Checked BOM alerts for {len(new_cves)} new CVEs")
             
             print(f"✅ Daily update complete. Added {len(new_cves)} new CVEs")
             
         else:
-            print(f"❌ NVD API error: {response.status_code}")
+            print(f"❌ NVD API error: HTTP {response.status_code}")
+            print(f"❌ Response: {response.text[:200]}")
             
     except Exception as e:
         print(f"❌ Error in daily update: {e}")
+        import traceback
+        traceback.print_exc()
 
 def update_cve_tracking(new_cves):
     """Update PostgreSQL tracking table with new CVEs"""
@@ -800,6 +848,80 @@ def check_boms_and_send_alerts(new_cves):
             print(f"   📧 Sent {len(matches)} alerts for {bom['name']}")
 
 # ============================================================
+# MANUAL UPDATE ROUTE
+# ============================================================
+
+@app.route("/update-cve", methods=["POST"])
+def update_cve():
+    """Manually trigger CVE update"""
+    try:
+        # Start update in background thread
+        thread = threading.Thread(target=fetch_new_cves_from_nvd)
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({
+            "status": "success",
+            "message": "CVE update started in background",
+            "time": datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+# ============================================================
+# DEBUG ROUTE TO TEST NVD API
+# ============================================================
+
+@app.route("/debug/test-nvd")
+def test_nvd():
+    """Test NVD API connection"""
+    try:
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=1)
+        
+        pub_start = start_date.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+        pub_end = end_date.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+        
+        headers = {"User-Agent": "CVE-Dashboard/1.0"}
+        if NVD_API_KEY:
+            headers["apiKey"] = NVD_API_KEY
+        
+        params = {
+            "pubStartDate": pub_start,
+            "pubEndDate": pub_end,
+            "resultsPerPage": 10
+        }
+        
+        response = requests.get(NVD_API_URL, params=params, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            total = data.get("totalResults", 0)
+            vulns = data.get("vulnerabilities", [])
+            
+            return jsonify({
+                "status": "success",
+                "total_results": total,
+                "returned": len(vulns),
+                "sample": vulns[0] if vulns else None
+            })
+        else:
+            return jsonify({
+                "status": "error",
+                "code": response.status_code,
+                "text": response.text[:200]
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+# ============================================================
 # SCHEDULER FOR DAILY UPDATES AND MONTHLY VACUUM
 # ============================================================
 
@@ -818,9 +940,13 @@ def check_and_run_monthly_vacuum():
     else:
         print(f"📅 Not first day of month (day {today.day}) - skipping VACUUM")
 
+# Schedule daily CVE updates at 2:00 AM UTC
 schedule.every().day.at("02:00").do(fetch_new_cves_from_nvd)
+
+# Check for monthly VACUUM every day at 2:30 AM
 schedule.every().day.at("02:30").do(check_and_run_monthly_vacuum)
 
+# Start scheduler
 scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
 scheduler_thread.start()
 print("⏰ Scheduler started — daily CVE update at 02:00 UTC")
@@ -1116,7 +1242,7 @@ def extract_affected_companies(description: str) -> list:
     return found
 
 # ============================================================
-# API ROUTES - FIXED STATS ROUTE
+# API ROUTES
 # ============================================================
 
 @app.route("/stats")
