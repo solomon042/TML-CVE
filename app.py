@@ -16,830 +16,64 @@ from functools import lru_cache
 import hashlib
 import re
 import secrets
-from datetime import datetime, timedelta, timezone
-import threading
-from collections import deque
-import psycopg2
-from psycopg2 import pool
-from psycopg2.extras import Json
-import schedule
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from datetime import timedelta
+
+# ── LOAD .env FILE (if present) ─────────────────────────────────────────
+# pip install python-dotenv
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv optional — use real env vars in production
+
+# ── ENVIRONMENT-DRIVEN CONFIGURATION ────────────────────────────────────
+# All secrets come from environment variables or a .env file.
+# NEVER hardcode secrets in this file — keep .env out of git (.gitignore).
+
+_IS_PRODUCTION = os.environ.get("FLASK_ENV", "development").lower() == "production"
 
 app = Flask(__name__)
 
-# ============================================================
-# ENVIRONMENT CONFIGURATION
-# ============================================================
+# Database path — override via env var for portability
+# DB path: env var → ./data/nvd_database.db → legacy absolute path
+_DEFAULT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "data", "nvd_database.db")
+DB = os.environ.get("CVE_DB_PATH") or _DEFAULT_DB
 
-DB = os.environ.get('CVE_DB_PATH', '/tmp/nvd_database.db')
+app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
-GITHUB_REPO  = os.environ.get('GITHUB_REPO',  'solomon042/TML-CVE-Dashboard')
-GITHUB_TAG   = os.environ.get('GITHUB_TAG',   'v1.0.0')
-GITHUB_ASSET = os.environ.get('GITHUB_ASSET', 'nvd_database.db')
+# SECRET_KEY — MUST be set as env var in production; stable across restarts
+_secret = os.environ.get('FLASK_SECRET_KEY', '')
+if not _secret:
+    if _IS_PRODUCTION:
+                raise RuntimeError(
+            "FLASK_SECRET_KEY is not set. "
+            "Generate one and add to .env: "
+            "python -c 'import secrets; print(secrets.token_hex(32))'"
+        )
+    # Dev-only: generate ephemeral key (sessions reset on restart — OK for dev)
+    _secret = secrets.token_hex(32)
+    print("⚠️  DEV MODE: No FLASK_SECRET_KEY set — sessions will reset on restart.")
+    print("   Add FLASK_SECRET_KEY=<value> to your .env file to persist sessions.")
 
-DATABASE_URL = os.environ.get('DATABASE_URL', '')
-
-SMTP_SERVER    = os.environ.get('SMTP_SERVER',    'smtp.gmail.com')
-SMTP_PORT      = int(os.environ.get('SMTP_PORT',  587))
-SMTP_USERNAME  = os.environ.get('SMTP_USERNAME',  '')
-SMTP_PASSWORD  = os.environ.get('SMTP_PASSWORD',  '')
-ALERT_EMAIL_FROM = os.environ.get('ALERT_EMAIL_FROM', SMTP_USERNAME or 'cve-alerts@localhost')
-
-app.config['SECRET_KEY']                = os.environ.get('FLASK_SECRET_KEY', secrets.token_hex(32))
-app.config['SESSION_COOKIE_HTTPONLY']   = True
-app.config['SESSION_COOKIE_SAMESITE']   = 'Lax'
+app.config['SECRET_KEY'] = _secret
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE']   = _IS_PRODUCTION  # HTTPS only in production
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=8)
 
-ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
-ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'cve@admin2024')
-
-app.config['UPLOAD_FOLDER']      = tempfile.gettempdir()
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 ALLOWED_EXTENSIONS = {'txt', 'csv', 'json', 'xml', 'xlsx', 'xls'}
 
-NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
-NVD_API_KEY = os.environ.get("NVD_API_KEY", "")
-
-# Global: tracks when the last successful NVD update ran (in-memory + PostgreSQL)
-_last_update_time: datetime | None = None
-_last_update_lock = threading.Lock()
-
-def get_last_update_time() -> datetime | None:
-    """Return last update time from memory, then PostgreSQL, then None."""
-    global _last_update_time
-    if _last_update_time:
-        return _last_update_time
-    if postgres_pool:
-        try:
-            conn = postgres_pool.getconn()
-            cur  = conn.cursor()
-            cur.execute("""
-                SELECT value FROM app_settings WHERE key = 'last_nvd_update'
-            """)
-            row = cur.fetchone()
-            cur.close()
-            postgres_pool.putconn(conn)
-            if row and row[0]:
-                dt = datetime.fromisoformat(row[0])
-                with _last_update_lock:
-                    _last_update_time = dt
-                return dt
-        except Exception:
-            pass
-    return None
-
-def set_last_update_time(dt: datetime):
-    """Persist the last update time to memory and PostgreSQL."""
-    global _last_update_time
-    with _last_update_lock:
-        _last_update_time = dt
-    if postgres_pool:
-        try:
-            conn = postgres_pool.getconn()
-            cur  = conn.cursor()
-            cur.execute("""
-                INSERT INTO app_settings (key, value)
-                VALUES ('last_nvd_update', %s)
-                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-            """, (dt.isoformat(),))
-            conn.commit()
-            cur.close()
-            postgres_pool.putconn(conn)
-        except Exception as e:
-            print(f"⚠️  Could not persist last_update: {e}")
-
-USE_AI       = True
-USE_AI_CACHE = True
-DATE_COLUMN  = "published"
-
-DEFAULT_AI_PROVIDER = "deepseek"
-DEEPSEEK_API_URL    = "https://api.deepseek.com/v1/chat/completions"
-DEEPSEEK_MODEL      = "deepseek-chat"
-OPENAI_API_URL      = "https://api.openai.com/v1/chat/completions"
-OPENAI_MODEL        = "gpt-4o-mini"
-CLAUDE_API_URL      = "https://api.anthropic.com/v1/messages"
-CLAUDE_MODEL        = "claude-3-haiku-20240307"
-OLLAMA_URL          = "http://localhost:11434/api/generate"
-OLLAMA_MODEL        = "llama3.2"
-
-STALE_PLACEHOLDERS = {
-    "no ai summary available",
-    "information not available",
-    "ai analysis unavailable",
-    "ai analysis unavailable — review description manually.",
-    "",
-}
-
-PROVIDER_INFO = {
-    "deepseek": {
-        "name": "DeepSeek",
-        "placeholder": "sk-...",
-        "models": ["deepseek-chat", "deepseek-reasoner"],
-        "free_tier": True,
-        "url": "https://platform.deepseek.com/api_keys",
-    },
-    "openai": {
-        "name": "OpenAI / ChatGPT",
-        "placeholder": "sk-proj-...",
-        "models": ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
-        "free_tier": False,
-        "url": "https://platform.openai.com/api-keys",
-    },
-    "claude": {
-        "name": "Anthropic Claude",
-        "placeholder": "sk-ant-...",
-        "models": ["claude-3-haiku-20240307", "claude-3-5-sonnet-20241022"],
-        "free_tier": False,
-        "url": "https://console.anthropic.com/settings/keys",
-    },
-    "ollama": {
-        "name": "Ollama (Local)",
-        "placeholder": "No API key needed",
-        "models": ["llama3.2", "llama3.1", "mistral", "phi3", "gemma2"],
-        "free_tier": True,
-        "url": "https://ollama.com/download",
-    },
-}
-
-# ============================================================
-# LOAD BOMS FROM ENVIRONMENT VARIABLES
-# ============================================================
-
-def load_boms_from_env():
-    boms = []
-    i = 1
-    print("📋 Loading BOMs from environment variables...")
-    while True:
-        keywords = os.environ.get(f'BOM_KEYWORDS_{i}')
-        email    = os.environ.get(f'BOM_EMAIL_{i}')
-        name     = os.environ.get(f'BOM_NAME_{i}', f'BOM {i}')
-        if not keywords or not email:
-            break
-        keyword_list = [k.strip().lower() for k in keywords.split(',') if k.strip()]
-        boms.append({'id': i, 'name': name, 'email': email, 'keywords': keyword_list})
-        print(f"   ✅ Loaded BOM {i}: {name} — {len(keyword_list)} keywords → {email}")
-        i += 1
-    if i == 1:
-        print("   ⚠️  No BOM env vars found. Set BOM_KEYWORDS_1, BOM_EMAIL_1, BOM_NAME_1 etc.")
-    return boms
-
-ENV_BOMS = load_boms_from_env()
-
-# ============================================================
-# DOWNLOAD DATABASE FROM GITHUB
-# ============================================================
-
-def download_cve_from_github():
-    """Download the CVE database from GitHub Releases. Skips if valid DB already exists."""
-    MIN_VALID_SIZE = 1024 * 1024  # 1 MB — anything smaller is treated as corrupt/empty
-
-    # ── Already have a valid DB? ──
-    if os.path.exists(DB):
-        file_size = os.path.getsize(DB)
-        if file_size > MIN_VALID_SIZE:
-            try:
-                test_conn = sqlite3.connect(DB)
-                cursor    = test_conn.cursor()
-                cursor.execute("SELECT count(*) FROM cves")
-                count = cursor.fetchone()[0]
-                cursor.close()
-                test_conn.close()
-                if count > 0:
-                    size_mb = file_size / (1024 * 1024)
-                    print(f"✅ DB exists and valid — {count:,} CVEs ({size_mb:.1f} MB)")
-                    return True
-                else:
-                    print("⚠️  DB exists but is empty (0 CVEs) — re-downloading")
-            except Exception as e:
-                print(f"⚠️  DB integrity check failed: {e} — re-downloading")
-        else:
-            print(f"⚠️  DB too small ({file_size} bytes) — re-downloading")
-
-        # Remove bad/empty DB before download
-        try:
-            os.remove(DB)
-        except Exception:
-            pass
-
-    download_url = (
-        f"https://github.com/{GITHUB_REPO}/releases/download/{GITHUB_TAG}/{GITHUB_ASSET}"
-    )
-    print(f"📥 Downloading CVE DB from GitHub: {download_url}")
-    print(f"   GITHUB_REPO={GITHUB_REPO}  TAG={GITHUB_TAG}  ASSET={GITHUB_ASSET}")
-
-    tmp_path = DB + ".tmp"
-
-    for attempt in range(1, 4):  # 3 attempts
-        print(f"   Attempt {attempt}/3…")
-        try:
-            response = requests.get(
-                download_url, stream=True,
-                timeout=300,            # 5 min — large DB
-                allow_redirects=True,
-            )
-            if response.status_code == 404:
-                print(f"❌ 404 — release not found at: {download_url}")
-                print("   ➡ Check GITHUB_REPO, GITHUB_TAG, GITHUB_ASSET env vars on Koyeb")
-                return False
-
-            response.raise_for_status()
-
-            total_size   = int(response.headers.get('content-length', 0))
-            downloaded   = 0
-            last_percent = -1
-
-            with open(tmp_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=65536):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if total_size:
-                            pct = int((downloaded / total_size) * 100)
-                            if pct // 10 > last_percent // 10:
-                                last_percent = pct
-                                mb = downloaded / (1024 * 1024)
-                                print(f"   {pct}% — {mb:.1f} MB downloaded")
-
-            # Validate downloaded file
-            dl_size = os.path.getsize(tmp_path)
-            if dl_size < MIN_VALID_SIZE:
-                print(f"❌ Downloaded file too small ({dl_size} bytes) — possibly wrong asset name")
-                os.remove(tmp_path)
-                continue
-
-            # Quick SQLite sanity check
-            try:
-                tc  = sqlite3.connect(tmp_path)
-                cur = tc.cursor()
-                cur.execute("SELECT count(*) FROM cves")
-                n   = cur.fetchone()[0]
-                tc.close()
-                if n == 0:
-                    print("❌ Downloaded DB has 0 CVEs — asset may be wrong file")
-                    os.remove(tmp_path)
-                    continue
-                print(f"✅ Validated — {n:,} CVEs in downloaded DB")
-            except Exception as ve:
-                print(f"❌ Downloaded file is not a valid SQLite DB: {ve}")
-                try: os.remove(tmp_path)
-                except: pass
-                continue
-
-            # Move to final path
-            os.replace(tmp_path, DB)
-            size_mb = os.path.getsize(DB) / (1024 * 1024)
-            print(f"✅ DB ready — {size_mb:.1f} MB")
-            return True
-
-        except requests.exceptions.Timeout:
-            print(f"⏱  Attempt {attempt} timed out — retrying…")
-        except Exception as e:
-            print(f"❌ Attempt {attempt} failed: {e}")
-        finally:
-            if os.path.exists(tmp_path):
-                try: os.remove(tmp_path)
-                except: pass
-
-        if attempt < 3:
-            time.sleep(5 * attempt)  # back-off: 5s, 10s
-
-    print("❌ All download attempts failed.")
-    print(f"   URL tried: {download_url}")
-    print("   ➡ Verify GITHUB_REPO, GITHUB_TAG, GITHUB_ASSET env vars on Koyeb")
-    print("   ➡ Check /api/nvd-status for live diagnostics")
-    return False
-
-# ============================================================
-# POSTGRESQL CONNECTION POOL
-# ============================================================
-
-postgres_pool = None
-
-def init_postgres():
-    global postgres_pool
-    if not DATABASE_URL:
-        print("⚠️  DATABASE_URL not configured — PostgreSQL features disabled")
-        return False
-    try:
-        postgres_pool = psycopg2.pool.SimpleConnectionPool(1, 20, DATABASE_URL)
-        conn = postgres_pool.getconn()
-        cur  = conn.cursor()
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS ai_generations (
-                id SERIAL PRIMARY KEY,
-                ip_address INET NOT NULL,
-                cve_id TEXT NOT NULL,
-                ai_summary TEXT,
-                affected_companies JSONB,
-                remediation TEXT,
-                affected_version TEXT,
-                fixed_version TEXT,
-                fix_status TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(ip_address, cve_id)
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS cve_tracking (
-                cve_id TEXT PRIMARY KEY,
-                first_seen_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_new BOOLEAN DEFAULT TRUE,
-                cvss_score REAL,
-                severity TEXT,
-                description TEXT,
-                published_date TEXT,
-                affected_companies JSONB
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS alert_history (
-                id SERIAL PRIMARY KEY,
-                email TEXT NOT NULL,
-                cve_id TEXT NOT NULL,
-                bom_name TEXT NOT NULL,
-                matched_keyword TEXT,
-                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        # App settings table (stores last_update time etc.)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS app_settings (
-                key   TEXT PRIMARY KEY,
-                value TEXT
-            )
-        """)
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_alert_email ON alert_history(email)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_alert_cve   ON alert_history(cve_id)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_cve_new     ON cve_tracking(is_new)")
-
-        conn.commit()
-        cur.close()
-        postgres_pool.putconn(conn)
-        print("✅ PostgreSQL tables ready")
-        return True
-    except Exception as e:
-        print(f"❌ PostgreSQL init failed: {e}")
-        return False
-
-# ============================================================
-# EMAIL
-# ============================================================
-
-def send_email_alert(to_email: str, subject: str, html_content: str) -> bool:
-    """Send an HTML email via configured SMTP server."""
-    if not SMTP_USERNAME or not SMTP_PASSWORD:
-        print("⚠️  SMTP credentials not configured — skipping email")
-        return False
-    try:
-        msg = MIMEMultipart('alternative')
-        msg['From']    = ALERT_EMAIL_FROM
-        msg['To']      = to_email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(html_content, 'html'))
-
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.ehlo()
-        server.starttls()
-        server.login(SMTP_USERNAME, SMTP_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        print(f"📧 Alert sent → {to_email}")
-        return True
-    except Exception as e:
-        print(f"❌ Email failed ({to_email}): {e}")
-        return False
-
-
-def get_keyword_statistics(keywords: list) -> dict:
-    """Return per-keyword CVE counts from the local SQLite database."""
-    stats = {}
-    try:
-        conn   = sqlite3.connect(DB)
-        cursor = conn.cursor()
-        for keyword in keywords:
-            cursor.execute(
-                "SELECT COUNT(*) FROM cves WHERE LOWER(description) LIKE ?",
-                (f'%{keyword.lower()}%',)
-            )
-            total = cursor.fetchone()[0]
-
-            cursor.execute("""
-                SELECT
-                    SUM(CASE WHEN cvss_score >= 9.0                          THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN cvss_score >= 7.0 AND cvss_score < 9.0     THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN cvss_score >= 4.0 AND cvss_score < 7.0     THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN cvss_score > 0  AND cvss_score < 4.0       THEN 1 ELSE 0 END)
-                FROM cves WHERE LOWER(description) LIKE ?
-            """, (f'%{keyword.lower()}%',))
-            sev = cursor.fetchone()
-
-            cursor.execute("""
-                SELECT COUNT(*) FROM cves
-                WHERE LOWER(description) LIKE ?
-                AND julianday('now') - julianday(published) <= 7
-            """, (f'%{keyword.lower()}%',))
-            new_count = cursor.fetchone()[0]
-
-            stats[keyword] = {
-                'total':    total,
-                'critical': sev[0] or 0,
-                'high':     sev[1] or 0,
-                'medium':   sev[2] or 0,
-                'low':      sev[3] or 0,
-                'new':      new_count,
-            }
-        cursor.close()
-        conn.close()
-    except Exception as e:
-        print(f"⚠️  keyword stats error: {e}")
-    return stats
-
-
-def send_bom_alert(email: str, bom_name: str, keywords: list, matches: list):
-    """Build and send the formatted CVE alert email for a BOM."""
-    keyword_stats = get_keyword_statistics(keywords)
-
-    subject = (
-        f"🚨 CVE Alert: {len(matches)} new vulnerabilit{'y' if len(matches)==1 else 'ies'} "
-        f"match your BOM '{bom_name}'"
-    )
-
-    # ── Keyword statistics table ──────────────────────────────
-    stats_rows_html = ""
-    total_all = total_crit = total_high = total_med = total_low = total_new = 0
-
-    for idx, (keyword, s) in enumerate(keyword_stats.items()):
-        total_all  += s['total']
-        total_crit += s['critical']
-        total_high += s['high']
-        total_med  += s['medium']
-        total_low  += s['low']
-        total_new  += s['new']
-        row_bg = '#f9f9f9' if idx % 2 == 0 else '#ffffff'
-        stats_rows_html += f"""
-        <tr style="background-color:{row_bg};">
-            <td style="padding:8px;border:1px solid #ddd;font-weight:bold;">{keyword}</td>
-            <td style="padding:8px;border:1px solid #ddd;text-align:center;">{s['total']:,}</td>
-            <td style="padding:8px;border:1px solid #ddd;text-align:center;color:#d9534f;font-weight:bold;">{s['critical']:,}</td>
-            <td style="padding:8px;border:1px solid #ddd;text-align:center;color:#f0ad4e;font-weight:bold;">{s['high']:,}</td>
-            <td style="padding:8px;border:1px solid #ddd;text-align:center;color:#5bc0de;font-weight:bold;">{s['medium']:,}</td>
-            <td style="padding:8px;border:1px solid #ddd;text-align:center;color:#5cb85c;font-weight:bold;">{s['low']:,}</td>
-            <td style="padding:8px;border:1px solid #ddd;text-align:center;background:#fcf8e3;font-weight:bold;">{s['new']:,}</td>
-        </tr>"""
-
-    stats_table_html = f"""
-    <h3 style="color:#333;margin-top:25px;">📊 Keyword Statistics (All Time)</h3>
-    <table style="width:100%;border-collapse:collapse;margin-top:15px;font-size:13px;">
-        <tr style="background:#4a5568;color:white;">
-            <th style="padding:10px;border:1px solid #ddd;">Keyword</th>
-            <th style="padding:10px;border:1px solid #ddd;">Total</th>
-            <th style="padding:10px;border:1px solid #ddd;">Critical</th>
-            <th style="padding:10px;border:1px solid #ddd;">High</th>
-            <th style="padding:10px;border:1px solid #ddd;">Medium</th>
-            <th style="padding:10px;border:1px solid #ddd;">Low</th>
-            <th style="padding:10px;border:1px solid #ddd;">New (7d)</th>
-        </tr>
-        {stats_rows_html}
-        <tr style="background:#e2e8f0;font-weight:bold;">
-            <td style="padding:10px;border:1px solid #ddd;">TOTAL</td>
-            <td style="padding:10px;border:1px solid #ddd;text-align:center;">{total_all:,}</td>
-            <td style="padding:10px;border:1px solid #ddd;text-align:center;color:#d9534f;">{total_crit:,}</td>
-            <td style="padding:10px;border:1px solid #ddd;text-align:center;color:#f0ad4e;">{total_high:,}</td>
-            <td style="padding:10px;border:1px solid #ddd;text-align:center;color:#5bc0de;">{total_med:,}</td>
-            <td style="padding:10px;border:1px solid #ddd;text-align:center;color:#5cb85c;">{total_low:,}</td>
-            <td style="padding:10px;border:1px solid #ddd;text-align:center;background:#fcf8e3;">{total_new:,}</td>
-        </tr>
-    </table>""" if keyword_stats else ""
-
-    # ── Today's matches table ──────────────────────────────────
-    matches_rows_html = ""
-    for match in matches:
-        cve   = match["cve"]
-        score = cve.get('cvss_score')
-        if score and float(score) >= 9:
-            sev_color = "#d9534f"
-        elif score and float(score) >= 7:
-            sev_color = "#f0ad4e"
-        elif score and float(score) >= 4:
-            sev_color = "#5bc0de"
-        else:
-            sev_color = "#5cb85c"
-
-        desc_snippet = (cve.get('description') or '')[:200]
-        if len(cve.get('description') or '') > 200:
-            desc_snippet += "…"
-
-        matches_rows_html += f"""
-        <tr>
-            <td style="padding:10px;border:1px solid #ddd;">
-                <a href="https://nvd.nist.gov/vuln/detail/{cve['cve_id']}"
-                   style="color:#1a56db;">{cve['cve_id']}</a>
-            </td>
-            <td style="padding:10px;border:1px solid #ddd;text-align:center;font-weight:bold;color:{sev_color};">
-                {score if score else 'N/A'}
-            </td>
-            <td style="padding:10px;border:1px solid #ddd;text-align:center;">
-                <span style="background:{sev_color};color:white;padding:3px 8px;border-radius:12px;font-size:.8rem;">
-                    {cve.get('severity', 'Unknown')}
-                </span>
-            </td>
-            <td style="padding:10px;border:1px solid #ddd;text-align:center;font-weight:bold;background:#f0f7ff;">
-                {match['keyword']}
-            </td>
-            <td style="padding:10px;border:1px solid #ddd;">{desc_snippet}</td>
-        </tr>"""
-
-    html = f"""
-    <html>
-    <head>
-    <meta charset="UTF-8">
-    <style>
-        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
-        .wrapper {{ max-width: 900px; margin: 0 auto; padding: 20px; }}
-        .header {{ background: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
-                   color: white; padding: 24px; text-align: center;
-                   border-radius: 8px 8px 0 0; }}
-        .header h1 {{ margin: 0; font-size: 1.6rem; }}
-        .header p  {{ margin: 6px 0 0; opacity: .9; }}
-        .body  {{ background: white; padding: 24px; border: 1px solid #e5e7eb;
-                   border-top: none; border-radius: 0 0 8px 8px; }}
-        .summary-box {{ background: #f8f9fa; padding: 16px; border-radius: 8px;
-                        margin-bottom: 20px; border: 1px solid #dee2e6; }}
-        .summary-box h3 {{ margin-top: 0; color: #4a5568; }}
-        .summary-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }}
-        .footer {{ margin-top: 30px; padding: 16px; color: #777; font-size: 12px;
-                   text-align: center; border-top: 1px solid #ddd; }}
-        table {{ border-collapse: collapse; }}
-    </style>
-    </head>
-    <body>
-    <div class="wrapper">
-        <div class="header">
-            <h1>🚨 CVE Alert</h1>
-            <p>{len(matches)} new vulnerabilit{'y' if len(matches)==1 else 'ies'} match your BOM</p>
-        </div>
-        <div class="body">
-            <div class="summary-box">
-                <h3>📋 BOM Summary</h3>
-                <div class="summary-grid">
-                    <div><strong>BOM Name:</strong> {bom_name}</div>
-                    <div><strong>Date:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}</div>
-                    <div><strong>Recipient:</strong> {email}</div>
-                    <div><strong>New Matches:</strong>
-                        <span style="color:#d9534f;font-weight:bold;">{len(matches)}</span>
-                    </div>
-                </div>
-            </div>
-
-            {stats_table_html}
-
-            <h3 style="color:#333;margin-top:30px;">🆕 New CVEs Found Today</h3>
-            <table style="width:100%;border-collapse:collapse;margin-top:15px;font-size:13px;">
-                <tr style="background:#4a5568;color:white;">
-                    <th style="padding:10px;border:1px solid #ddd;text-align:left;">CVE ID</th>
-                    <th style="padding:10px;border:1px solid #ddd;">CVSS</th>
-                    <th style="padding:10px;border:1px solid #ddd;">Severity</th>
-                    <th style="padding:10px;border:1px solid #ddd;">Matched Keyword</th>
-                    <th style="padding:10px;border:1px solid #ddd;text-align:left;">Description</th>
-                </tr>
-                {matches_rows_html}
-            </table>
-
-            <div class="footer">
-                <p>This is an automated alert from your CVE Monitoring Dashboard.</p>
-                <p>You received this because your BOM "<strong>{bom_name}</strong>" contains
-                   keywords that match these CVEs.</p>
-                <p>© {datetime.now().year} CVE Monitoring Dashboard</p>
-            </div>
-        </div>
-    </div>
-    </body>
-    </html>"""
-
-    return send_email_alert(email, subject, html)
-
-# ============================================================
-# DAILY CVE UPDATE
-# ============================================================
-
-def fetch_new_cves_from_nvd():
-    """Fetch CVEs published in the last 24 hours and update the SQLite DB + send BOM alerts."""
-    print(f"🔄 [{datetime.now()}] Starting daily CVE update…")
-
-    end_date   = datetime.now(timezone.utc)
-    start_date = end_date - timedelta(days=1)
-    pub_start  = start_date.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
-    pub_end    = end_date.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
-
-    headers = {"User-Agent": "CVE-Dashboard/1.0"}
-    if NVD_API_KEY:
-        headers["apiKey"] = NVD_API_KEY
-
-    new_cves = []
-    try:
-        params = {
-            "pubStartDate":   pub_start,
-            "pubEndDate":     pub_end,
-            "resultsPerPage": 2000,
-        }
-        resp = requests.get(NVD_API_URL, params=params, headers=headers, timeout=60)
-        if resp.status_code != 200:
-            print(f"❌ NVD API returned {resp.status_code}")
-            return
-
-        vulnerabilities = resp.json().get("vulnerabilities", [])
-        print(f"📥 NVD returned {len(vulnerabilities)} CVEs for last 24 h")
-
-        conn   = sqlite3.connect(DB)
-        cursor = conn.cursor()
-
-        for item in vulnerabilities:
-            cve_data = item.get("cve", {})
-            cve_id   = cve_data.get("id", "")
-            if not cve_id:
-                continue
-
-            descs = cve_data.get("descriptions", [])
-            desc  = next((d["value"] for d in descs if d.get("lang") == "en"), "")
-
-            metrics = cve_data.get("metrics", {})
-            cvss    = None
-            for key in ["cvssMetricV31", "cvssMetricV30", "cvssMetricV2"]:
-                if key in metrics and metrics[key]:
-                    try:
-                        cvss = float(metrics[key][0]["cvssData"]["baseScore"])
-                    except Exception:
-                        pass
-                    break
-
-            published = cve_data.get("published", "")[:10]
-            companies = extract_affected_companies(desc)
-
-            cursor.execute("SELECT cve_id FROM cves WHERE cve_id = ?", (cve_id,))
-            if not cursor.fetchone():
-                cursor.execute(
-                    "INSERT INTO cves (cve_id, description, cvss_score, published) VALUES (?,?,?,?)",
-                    (cve_id, desc, cvss, published)
-                )
-                new_cves.append({
-                    "cve_id":    cve_id,
-                    "description": desc,
-                    "cvss_score":  cvss,
-                    "severity":    calculate_severity(cvss),
-                    "published":   published,
-                    "companies":   companies,
-                })
-                print(f"   🆕 {cve_id}")
-
-        conn.commit()
-        conn.close()
-
-        if new_cves and postgres_pool:
-            update_cve_tracking(new_cves)
-
-        # Always check BOMs — if no new CVEs, fall back to last-24h CVEs from DB
-        check_boms_and_send_alerts(new_cves, force_check_recent=(len(new_cves) == 0))
-
-        # Record successful update time
-        set_last_update_time(datetime.now(timezone.utc))
-
-        print(f"✅ Daily update done — {len(new_cves)} new CVEs added")
-
-    except Exception as e:
-        print(f"❌ Daily update error: {e}")
-        import traceback; traceback.print_exc()
-
-
-def update_cve_tracking(new_cves: list):
-    try:
-        conn = postgres_pool.getconn()
-        cur  = conn.cursor()
-        for cve in new_cves:
-            cur.execute("""
-                INSERT INTO cve_tracking
-                    (cve_id, first_seen_date, is_new, cvss_score, severity,
-                     description, published_date, affected_companies)
-                VALUES (%s, CURRENT_TIMESTAMP, TRUE, %s, %s, %s, %s, %s)
-                ON CONFLICT (cve_id) DO NOTHING
-            """, (
-                cve["cve_id"], cve["cvss_score"], cve["severity"],
-                cve["description"], cve["published"], Json(cve["companies"])
-            ))
-        conn.commit()
-        cur.close()
-        postgres_pool.putconn(conn)
-    except Exception as e:
-        print(f"❌ cve_tracking update error: {e}")
-
-
-def check_boms_and_send_alerts(new_cves: list, force_check_recent: bool = False):
-    """
-    Check BOMs against CVEs and send alert emails.
-    - new_cves: freshly inserted CVEs from this update run
-    - force_check_recent: if True and new_cves is empty, check last-24h CVEs from DB anyway
-    """
-    if not ENV_BOMS:
-        print("   ⚠️  No BOMs configured — skipping alert check")
-        return
-
-    cves_to_check = new_cves
-
-    # If no new CVEs were inserted (they already existed), fall back to
-    # last-24h CVEs from the DB so alerts still fire on manual triggers
-    if not cves_to_check or force_check_recent:
-        print("   ℹ️  No brand-new CVEs — checking last 24h from DB for BOM matches…")
-        try:
-            conn   = sqlite3.connect(DB)
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT cve_id, description, cvss_score, published
-                FROM cves
-                WHERE julianday('now') - julianday(published) <= 1
-                ORDER BY published DESC
-                LIMIT 500
-            """)
-            rows = cursor.fetchall()
-            conn.close()
-            cves_to_check = [
-                {
-                    "cve_id":      r[0],
-                    "description": r[1] or "",
-                    "cvss_score":  r[2],
-                    "severity":    calculate_severity(r[2]),
-                    "published":   r[3],
-                    "companies":   extract_affected_companies(r[1] or ""),
-                }
-                for r in rows
-            ]
-            print(f"   Found {len(cves_to_check)} CVEs published in last 24h for BOM matching")
-        except Exception as e:
-            print(f"   ❌ Could not fetch recent CVEs for BOM check: {e}")
-            return
-
-    if not cves_to_check:
-        print("   ℹ️  No CVEs to check against BOMs")
-        return
-
-    print(f"   Checking {len(ENV_BOMS)} BOM(s) against {len(cves_to_check)} CVE(s)…")
-    for bom in ENV_BOMS:
-        matches = []
-        for cve in cves_to_check:
-            desc_lower = (cve["description"] or "").lower()
-            for keyword in bom['keywords']:
-                if keyword.lower() in desc_lower:
-                    matches.append({"cve": cve, "keyword": keyword})
-                    break  # one match per CVE per BOM
-
-        print(f"   BOM '{bom['name']}': {len(matches)} match(es) for keywords {bom['keywords']}")
-
-        if matches:
-            if postgres_pool:
-                try:
-                    conn = postgres_pool.getconn()
-                    cur  = conn.cursor()
-                    for match in matches:
-                        cur.execute("""
-                            INSERT INTO alert_history (email, cve_id, bom_name, matched_keyword)
-                            VALUES (%s, %s, %s, %s)
-                            ON CONFLICT DO NOTHING
-                        """, (bom['email'], match['cve']['cve_id'], bom['name'], match['keyword']))
-                    conn.commit()
-                    cur.close()
-                    postgres_pool.putconn(conn)
-                except Exception as e:
-                    print(f"   ⚠️  alert_history write error: {e}")
-
-            send_bom_alert(bom['email'], bom['name'], bom['keywords'], matches)
-            print(f"   📧 Alert sent: '{bom['name']}' → {bom['email']} ({len(matches)} CVEs)")
-
-# ============================================================
-# SCHEDULER
-# ============================================================
-
-def run_scheduler():
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
-
-schedule.every().day.at("02:00").do(fetch_new_cves_from_nvd)
-
-scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-scheduler_thread.start()
-print("⏰ Scheduler started — daily CVE update at 02:00 UTC")
-
-# ============================================================
-# RATE LIMITING
-# ============================================================
+# ── RATE LIMITING (simple in-memory) ────────────────────────────────────
+import threading
+from collections import deque
 
 _rate_lock = threading.Lock()
-_request_log: dict = {}
+_request_log: dict[str, deque] = {}
 
 def _is_rate_limited(ip: str, max_req: int = 60, window: int = 60) -> bool:
+    """Allow max_req requests per window seconds per IP."""
     now = time.time()
     with _rate_lock:
         if ip not in _request_log:
@@ -854,29 +88,40 @@ def _is_rate_limited(ip: str, max_req: int = 60, window: int = 60) -> bool:
 
 @app.before_request
 def security_checks():
+    """Global security middleware — runs before every request."""
     ip = request.remote_addr or "unknown"
+
+    # Skip rate limiting for long-running streaming endpoints
     if request.path in ('/api/nvd-update', '/api/nvd-status', '/admin/update-db'):
-        return
+        return  # These are long-running — rate limiting doesn't apply
+
+    # Rate limits by endpoint type
     if request.path.startswith('/admin'):
         limit = 20
     elif request.path.startswith('/api/ai-analyze'):
-        limit = 120
+        limit = 120   # batch AI calls — needs higher limit
     elif request.path.startswith('/api/'):
         limit = 2000
     else:
         limit = 80
+
     if _is_rate_limited(ip, max_req=limit, window=60):
         return jsonify({"error": "Too many requests. Please slow down."}), 429
+
+    # Block obviously malicious paths
     bad_patterns = ['../', '.env', 'wp-admin', 'phpmyadmin', '.git', 'etc/passwd']
-    if any(p in request.path.lower() for p in bad_patterns):
+    path_lower = request.path.lower()
+    if any(p in path_lower for p in bad_patterns):
         abort(404)
 
 @app.after_request
 def add_security_headers(response):
+    """Add security headers to every response."""
     response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options']        = 'SAMEORIGIN'
-    response.headers['X-XSS-Protection']       = '1; mode=block'
-    response.headers['Referrer-Policy']        = 'strict-origin-when-cross-origin'
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    # Skip CSP for NVD update page and its API endpoints — XHR needs full access
     skip_csp = request.path in ('/update-cve', '/api/nvd-update', '/api/nvd-status')
     if not skip_csp:
         response.headers['Content-Security-Policy'] = (
@@ -888,14 +133,31 @@ def add_security_headers(response):
     return response
 
 # ============================================================
-# CSRF / URL HELPERS
+# ADMIN CREDENTIALS — set via environment variables / .env
+# ============================================================
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+
+if not ADMIN_PASSWORD:
+    if _IS_PRODUCTION:
+        raise RuntimeError(
+            "ADMIN_PASSWORD environment variable is not set. "
+            "Add ADMIN_PASSWORD=<strong-password> to your .env file."
+        )
+    ADMIN_PASSWORD = "cve@admin2024"   # dev fallback only
+    print("⚠️  DEV MODE: Using default admin password. Set ADMIN_PASSWORD in .env for production.")
+
+# ============================================================
+# URL SECURITY — Keyword obfuscation & CSRF token
 # ============================================================
 
 def _obfuscate(text: str) -> str:
+    """Base64-encode keywords so they are not plain in URLs."""
     import base64
     return base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
 
 def _deobfuscate(token: str) -> str:
+    """Decode obfuscated keyword string."""
     import base64
     padding = 4 - len(token) % 4
     if padding != 4:
@@ -906,99 +168,757 @@ def _deobfuscate(token: str) -> str:
         return token
 
 def generate_csrf_token() -> str:
-    if "csrf_token" not in session:
-        session["csrf_token"] = secrets.token_hex(24)
-    return session["csrf_token"]
+    """Generate a per-session CSRF token."""
+    from flask import session as fs
+    if "csrf_token" not in fs:
+        fs["csrf_token"] = secrets.token_hex(24)
+    return fs["csrf_token"]
 
 def validate_csrf(token: str) -> bool:
-    return secrets.compare_digest(session.get("csrf_token", ""), token or "")
+    from flask import session as fs
+    return secrets.compare_digest(fs.get("csrf_token", ""), token or "")
 
+# Make csrf token available in all templates
 @app.context_processor
 def inject_csrf():
     return {"csrf_token": generate_csrf_token()}
 
 # ============================================================
-# AI CONFIGURATION
+# AI CONFIGURATION  — Multi-Provider Support
+# ============================================================
+# Supported providers: "deepseek" | "openai" | "claude" | "ollama"
+# Users can change provider + API key at runtime via /settings page.
+# These are the SERVER-SIDE defaults (used when no session setting found).
+
+DEFAULT_AI_PROVIDER = "deepseek"   # default provider on first launch
+
+# DeepSeek
+DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+DEEPSEEK_MODEL   = "deepseek-chat"
+
+# OpenAI / ChatGPT
+OPENAI_API_URL   = "https://api.openai.com/v1/chat/completions"
+OPENAI_MODEL     = "gpt-4o-mini"    # cheapest capable model
+
+# Anthropic / Claude
+CLAUDE_API_URL   = "https://api.anthropic.com/v1/messages"
+CLAUDE_MODEL     = "claude-3-haiku-20240307"   # fast + affordable
+
+# Ollama (local, no API key needed)
+OLLAMA_URL       = "http://localhost:11434/api/generate"
+OLLAMA_MODEL     = "llama3.2"
+
+USE_AI       = True
+USE_AI_CACHE = True   # True=reuse DB results | False=always call fresh
+
+# NVD Update config
+NVD_API_URL      = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+NVD_API_KEY      = os.environ.get("NVD_API_KEY", "")   # optional, raises rate limit
+DB_UPDATE_DAYS   = 180    # how many days back to fetch on update
+
+# Global variable for date column
+DATE_COLUMN = "published"
+
+
+# ============================================================
+# AI PROVIDER HELPERS
 # ============================================================
 
 def get_ai_config():
-    provider = session.get("ai_provider", DEFAULT_AI_PROVIDER)
-    api_key  = session.get("ai_api_key",  "")
-    model    = session.get("ai_model",    "")
+    """
+    Return (provider, api_key, model) from Flask session (user-set at runtime),
+    falling back to server defaults. Called per-request so each user can have
+    their own provider/key without restarting the server.
+    """
+    from flask import session as fsession
+    provider = fsession.get("ai_provider", DEFAULT_AI_PROVIDER)
+    api_key  = fsession.get("ai_api_key",  "")
+    model    = fsession.get("ai_model",    "")
+
+    # Fall back to env / hardcoded defaults if session not set
     if provider == "deepseek":
-        api_key = api_key or os.environ.get("DEEPSEEK_API_KEY",  "")
+        api_key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
         model   = model   or DEEPSEEK_MODEL
     elif provider == "openai":
-        api_key = api_key or os.environ.get("OPENAI_API_KEY",    "")
+        api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         model   = model   or OPENAI_MODEL
     elif provider == "claude":
         api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         model   = model   or CLAUDE_MODEL
     elif provider == "ollama":
-        api_key = "ollama"
+        api_key = "ollama"   # no key needed
         model   = model or OLLAMA_MODEL
+
+    # ── KEY MISSING? Give a clear hint ──────────────────────────
+    if not api_key and provider != "ollama":
+        # Check if we're inside a request context — safe to check session
+        try:
+            from flask import has_request_context
+            if has_request_context():
+                pass  # already reading from session above
+        except Exception:
+            pass
+
     return provider, api_key, model
 
+
+PROVIDER_INFO = {
+    "deepseek": {
+        "name":        "DeepSeek",
+        "placeholder": "sk-...",
+        "models":      ["deepseek-chat", "deepseek-reasoner"],
+        "free_tier":   True,
+        "url":         "https://platform.deepseek.com/api_keys",
+    },
+    "openai": {
+        "name":        "OpenAI / ChatGPT",
+        "placeholder": "sk-proj-...",
+        "models":      ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
+        "free_tier":   False,
+        "url":         "https://platform.openai.com/api-keys",
+    },
+    "claude": {
+        "name":        "Anthropic Claude",
+        "placeholder": "sk-ant-...",
+        "models":      ["claude-3-haiku-20240307", "claude-3-5-sonnet-20241022"],
+        "free_tier":   False,
+        "url":         "https://console.anthropic.com/settings/keys",
+    },
+    "ollama": {
+        "name":        "Ollama (Local)",
+        "placeholder": "No API key needed",
+        "models":      ["llama3.2", "llama3.1", "mistral", "phi3", "gemma2"],
+        "free_tier":   True,
+        "url":         "https://ollama.com/download",
+    },
+}
+
+
 # ============================================================
-# DATABASE INIT
+# DATABASE INITIALIZATION
 # ============================================================
 
 def init_database():
+    conn = sqlite3.connect(DB)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS cve_ai_analysis (
+        cve_id TEXT PRIMARY KEY,
+        summary TEXT,
+        affected_companies TEXT,
+        remediation TEXT,
+        affected_version TEXT,
+        fixed_version TEXT,
+        fix_status TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (cve_id) REFERENCES cves(cve_id)
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS ai_cache (
+        cache_key TEXT PRIMARY KEY,
+        response TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # Transparent usage analytics — stores provider/model only, NEVER API keys
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS usage_analytics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event TEXT NOT NULL,
+        provider TEXT,
+        model TEXT,
+        ip_hash TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     try:
-        conn   = sqlite3.connect(DB)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cves_published ON cves(published DESC)")
+    except: pass
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cves_cvss_score ON cves(cvss_score)")
+    except: pass
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_analysis_fix_status ON cve_ai_analysis(fix_status)")
+
+    conn.commit()
+    conn.close()
+    print("✅ Database initialized successfully")
+
+
+def ensure_ai_table_columns():
+    conn = sqlite3.connect(DB)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cve_ai_analysis'")
+    if not cursor.fetchone():
+        cursor.execute("""
+        CREATE TABLE cve_ai_analysis (
+            cve_id TEXT PRIMARY KEY,
+            summary TEXT,
+            affected_companies TEXT,
+            remediation TEXT,
+            affected_version TEXT,
+            fixed_version TEXT,
+            fix_status TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (cve_id) REFERENCES cves(cve_id)
+        )
+        """)
+        print("✅ Created cve_ai_analysis table")
+    else:
+        cursor.execute("PRAGMA table_info(cve_ai_analysis)")
+        columns = [col[1] for col in cursor.fetchall()]
+        required = ['summary', 'affected_companies', 'remediation',
+                    'affected_version', 'fixed_version', 'fix_status']
+        for col in required:
+            if col not in columns:
+                try:
+                    cursor.execute(f"ALTER TABLE cve_ai_analysis ADD COLUMN {col} TEXT")
+                    print(f"✅ Added {col} column")
+                except Exception as e:
+                    print(f"⚠️ Could not add {col}: {e}")
+
+    conn.commit()
+    conn.close()
+
+
+# ============================================================
+# AI CACHE HELPERS
+# ============================================================
+
+def get_cache_key(text, task_type):
+    return hashlib.md5(f"{task_type}:{text}".encode()).hexdigest()
+
+
+def get_cached_ai_response(cache_key):
+    try:
+        conn = sqlite3.connect(DB)
         cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS cves (
-                cve_id TEXT PRIMARY KEY,
-                description TEXT,
-                cvss_score REAL,
-                severity TEXT,
-                published TEXT,
-                last_modified TEXT,
-                "references" TEXT,
-                cwe_id TEXT
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS cve_ai_analysis (
-                cve_id TEXT PRIMARY KEY,
-                summary TEXT,
-                affected_companies TEXT,
-                remediation TEXT,
-                affected_version TEXT,
-                fixed_version TEXT,
-                fix_status TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS ai_cache (
-                cache_key TEXT PRIMARY KEY,
-                response TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        for idx_sql in [
-            "CREATE INDEX IF NOT EXISTS idx_cves_published   ON cves(published DESC)",
-            "CREATE INDEX IF NOT EXISTS idx_cves_cvss_score  ON cves(cvss_score)",
-            "CREATE INDEX IF NOT EXISTS idx_ai_fix_status    ON cve_ai_analysis(fix_status)",
-        ]:
-            try:
-                cursor.execute(idx_sql)
-            except Exception as e:
-                print(f"⚠️  Index warning: {e}")
+        cursor.execute("SELECT response FROM ai_cache WHERE cache_key = ?", (cache_key,))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
+def cache_ai_response(cache_key, response):
+    try:
+        conn = sqlite3.connect(DB)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR REPLACE INTO ai_cache (cache_key, response) VALUES (?, ?)",
+            (cache_key, response)
+        )
         conn.commit()
         conn.close()
-        print("✅ SQLite database initialised")
-        return True
     except Exception as e:
-        print(f"⚠️  SQLite init error: {e}")
-        return False
+        print(f"⚠️ Cache write error: {e}")
+
+
+# ============================================================
+# UNIFIED AI CALLER  — works with DeepSeek / OpenAI / Claude / Ollama
+# ============================================================
+
+def _build_prompt_messages(system_prompt: str, user_prompt: str) -> list:
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user",   "content": user_prompt},
+    ]
+
+
+def call_ai_provider(prompt_text: str, max_tokens: int = 200,
+                     provider: str = None, api_key: str = None,
+                     model: str = None) -> str | None:
+    """Simple text call — returns raw string or None."""
+    if not provider:
+        provider, api_key, model = get_ai_config()
+
+    try:
+        if provider == "ollama":
+            payload = {"model": model, "prompt": prompt_text, "stream": False}
+            resp = requests.post(OLLAMA_URL, json=payload, timeout=60)
+            if resp.status_code == 200:
+                return resp.json().get("response", "").strip()
+            return None
+
+        if provider == "claude":
+            headers = {
+                "x-api-key":         api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type":      "application/json",
+            }
+            payload = {
+                "model":      model,
+                "max_tokens": max_tokens,
+                "messages":   [{"role": "user", "content": prompt_text}],
+            }
+            resp = requests.post(CLAUDE_API_URL, json=payload, headers=headers, timeout=30)
+            if resp.status_code == 200:
+                return resp.json()["content"][0]["text"].strip()
+            print(f"Claude error {resp.status_code}: {resp.text[:200]}")
+            return None
+
+        # OpenAI-compatible (DeepSeek + OpenAI share same format)
+        url = DEEPSEEK_API_URL if provider == "deepseek" else OPENAI_API_URL
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        payload = {
+            "model":      model,
+            "messages":   [{"role": "user", "content": prompt_text}],
+            "max_tokens": max_tokens,
+            "temperature": 0.1,
+        }
+        resp = requests.post(url, json=payload, headers=headers, timeout=30)
+        if resp.status_code == 200:
+            return resp.json()["choices"][0]["message"]["content"].strip()
+        print(f"{provider} error {resp.status_code}: {resp.text[:200]}")
+        return None
+
+    except Exception as e:
+        print(f"AI call exception ({provider}): {e}")
+        return None
+
+
+def call_deepseek(prompt, max_tokens=200):
+    """Kept for /test-ai backward compat."""
+    return call_ai_provider(prompt, max_tokens)
+
+
+def call_ai_json(cve_id: str, description: str,
+                 provider: str = None, api_key: str = None,
+                 model: str = None) -> dict | None:
+    """
+    Call AI provider with structured JSON prompt.
+    Returns parsed dict with 7 keys, or None on failure.
+    Works with DeepSeek / OpenAI / Claude / Ollama.
+    """
+    if not provider:
+        provider, api_key, model = get_ai_config()
+
+    if not api_key and provider != "ollama":
+        print(f"⚠️ No API key for provider '{provider}'")
+        return None
+
+    short_desc = description[:1200]
+
+    system_prompt = (
+        "You are a senior cybersecurity analyst. "
+        "Respond ONLY with a valid JSON object — no markdown, no code fences, no extra text. "
+        "JSON keys required:\n\n"
+        "  summary - 2-3 sentences: (1) what the vulnerability is and which component is "
+        "affected, (2) exactly how an attacker exploits it — state the attack vector "
+        "(network/local/physical), privileges required, and whether user interaction is needed, "
+        "(3) worst-case impact: RCE, privilege escalation, data exfiltration, persistent XSS, "
+        "DoS, etc. Mention the CVE class (buffer overflow, SQL injection, etc). Be precise.\n\n"
+        "  affected_vendor  - vendor/company name only, or 'Unknown'\n\n"
+        "  affected_product - exact product name, or 'Unknown'\n\n"
+        "  affected_version - exact version range from description (e.g. '< 2026.2.0'), "
+        "or 'Unknown'\n\n"
+        "  fixed_version - specific version that fixes the issue. Extract from description. "
+        "Only use Unknown if truly no version is stated.\n\n"
+        "  fix_status - MUST be exactly one of: 'Fix Available', 'Not Fixed', "
+        "'Workaround Available', 'Unknown'\n\n"
+        "  remediation - 2-3 sentences of SPECIFIC technical actions:\n"
+        "  (1) If fixed version known: 'Upgrade <product> to <version> or later immediately.'\n"
+        "  (2) If no patch: disable the specific endpoint/feature, block port X, "
+        "restrict to trusted IPs, apply WAF rule for specific payload.\n"
+        "  (3) Monitoring tip: specific log entry, Windows Event ID, or network pattern to alert on.\n"
+        "  NEVER write 'review vendor advisory' or 'apply recommended mitigations'.\n"
+    )
+
+    user_prompt = (
+        f"CVE ID: {cve_id}\nDescription: {short_desc}\n\n"
+        "Return the JSON object only. No markdown fences."
+    )
+
+    try:
+        if provider == "ollama":
+            full_prompt = f"{system_prompt}\n\n{user_prompt}"
+            payload = {"model": model, "prompt": full_prompt, "stream": False}
+            resp = requests.post(OLLAMA_URL, json=payload, timeout=120)
+            if resp.status_code != 200:
+                return None
+            raw = resp.json().get("response", "").strip()
+
+        elif provider == "claude":
+            headers = {
+                "x-api-key":         api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type":      "application/json",
+            }
+            payload = {
+                "model":      model,
+                "max_tokens": 700,
+                "system":     system_prompt,
+                "messages":   [{"role": "user", "content": user_prompt}],
+            }
+            resp = requests.post(CLAUDE_API_URL, json=payload, headers=headers, timeout=60)
+            if resp.status_code != 200:
+                print(f"Claude error {resp.status_code}: {resp.text[:200]}")
+                return None
+            raw = resp.json()["content"][0]["text"].strip()
+
+        else:
+            # OpenAI-compatible (DeepSeek + OpenAI)
+            url     = DEEPSEEK_API_URL if provider == "deepseek" else OPENAI_API_URL
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model":    model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": user_prompt},
+                ],
+                "max_tokens":  700,
+                "temperature": 0.1,
+            }
+            resp = requests.post(url, json=payload, headers=headers, timeout=45)
+            if resp.status_code != 200:
+                print(f"⚠️ {provider} HTTP {resp.status_code}: {resp.text[:300]}")
+                return None
+            # Check for empty body BEFORE parsing
+            body = resp.text.strip()
+            if not body:
+                print(f"⚠️ {provider} returned empty body for {cve_id} — likely bad/missing API key")
+                print(f"   API key present: {'YES (len=' + str(len(api_key)) + ')' if api_key else 'NO — KEY IS EMPTY!'}")
+                return None
+            resp_json = resp.json()
+            # Check for API-level errors (e.g. DeepSeek returns {"error": {...}})
+            if "error" in resp_json:
+                err = resp_json["error"]
+                print(f"⚠️ {provider} API error for {cve_id}: {err.get('message', err)}")
+                return None
+            choices = resp_json.get("choices", [])
+            if not choices:
+                print(f"⚠️ {provider} returned no choices for {cve_id}: {body[:200]}")
+                return None
+
+            msg = choices[0].get("message", {})
+            raw = (msg.get("content") or "").strip()
+            if not raw:
+                # deepseek-reasoner returns empty content + reasoning_content (chain-of-thought)
+                # reasoning_content is NOT JSON — never try to parse it
+                reasoning = (msg.get("reasoning_content") or "").strip()
+                if reasoning:
+                    print(f"⚠️ {provider}/{model} returned empty content for {cve_id}.")
+                    print(f"   Model is deepseek-reasoner which does not return JSON reliably.")
+                    print(f"   → FIX: Go to /settings and switch model to 'deepseek-chat'")
+                else:
+                    print(f"⚠️ {provider} returned empty content for {cve_id}. Model: {model}")
+                return None
+            print(f"✅ {provider} response received for {cve_id} ({len(raw)} chars)")
+
+        # Strip markdown fences if model added them despite instructions
+        if raw.startswith("```"):
+            parts = raw.split("```")
+            raw = parts[1] if len(parts) > 1 else raw
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+
+        return json.loads(raw)
+
+    except json.JSONDecodeError as e:
+        print(f"⚠️ JSON parse error ({provider}) for {cve_id}: {e}")
+        return None
+    except Exception as e:
+        print(f"⚠️ AI JSON call exception ({provider}) for {cve_id}: {e}")
+        return None
+
+
+# Alias for backward compat
+def call_deepseek_json(cve_id, description):
+    return call_ai_json(cve_id, description)
+
+
+# ============================================================
+# RULE-BASED FALLBACKS
+# ============================================================
+
+STALE_PLACEHOLDERS = {
+    "no ai summary available",
+    "information not available",
+    "ai analysis unavailable",
+    "ai analysis unavailable — review description manually.",
+    "no patch info in cve description — restrict access to the affected component and monitor vendor advisories.",
+    "",
+}
+
+KNOWN_VENDORS = [
+    "Microsoft", "Apple", "Google", "Amazon", "Meta", "Facebook", "Twitter",
+    "Linux", "Windows", "Adobe", "Oracle", "IBM", "Intel", "AMD", "NVIDIA",
+    "Cisco", "Dell", "HP", "Lenovo", "Samsung", "Sony", "Tenda", "TP-Link",
+    "D-Link", "Netgear", "Asus", "Linksys", "Bosch", "Alps Alpine", "Harman",
+    "Nissan", "Tesla", "Ford", "Toyota", "Honda", "Volkswagen", "BMW", "Mercedes",
+    "Qualcomm", "MediaTek", "Broadcom", "Texas Instruments", "Infineon",
+    "STMicroelectronics", "Renesas", "NXP", "Microchip", "Analog Devices",
+    "Apache", "Nginx", "Red Hat", "Canonical", "Ubuntu", "Debian", "Fedora",
+    "SUSE", "VMware", "Docker", "Kubernetes", "GitHub", "GitLab", "Atlassian",
+    "WordPress", "Drupal", "Joomla", "Magento", "Shopify", "WooCommerce",
+    "Siemens", "Schneider", "Rockwell", "Honeywell", "ABB", "Mitsubishi",
+]
+
+
+def extract_affected_companies(description: str) -> list:
+    found = []
+    dl = description.lower()
+    for v in KNOWN_VENDORS:
+        if v.lower() in dl:
+            found.append(v)
+    return found
+
+
+def _rule_based_fix_status(description: str) -> str:
+    d = description.lower()
+    if any(t in d for t in [
+        "fixed in", "patched in", "update to", "upgrade to", "patch available",
+        "has been fixed", "addressed in", "resolved in", "users should update",
+        "users are advised to upgrade", "update available", "new version",
+        "later version", "this issue is fixed",
+    ]):
+        return "Fix Available"
+    if any(t in d for t in [
+        "no fix", "unpatched", "no patch", "no update available",
+        "not yet fixed", "still vulnerable", "vendor has not",
+    ]):
+        return "Not Fixed"
+    if any(t in d for t in [
+        "workaround", "as a mitigation", "can be mitigated",
+        "disable the", "restrict access",
+    ]):
+        return "Workaround Available"
+    return "Unknown"
+
+
+def _rule_based_remediation(description: str, cve_id: str = "") -> str:
+    """Extract specific remediation from description, or return a CVE-linked advisory."""
+    d = description.lower()
+
+    # Try to pull a specific version number from the description
+    version_match = re.search(
+        r'(?:prior to|before|below|less than|up to|through|fixed in|patched in|update to|upgrade to)\s+([\d][.\d]+)',
+        d
+    )
+    version_str = version_match.group(1) if version_match else None
+
+    # Also look for product name at start of description
+    product_match = re.match(r'^([A-Za-z0-9][A-Za-z0-9 \-_]{2,40}?)\s+(?:version|v[\d]|[\d])', description)
+    product_str = product_match.group(1).strip() if product_match else None
+
+    if "update" in d or "upgrade" in d:
+        if version_str and product_str:
+            return (f"Upgrade {product_str} to version {version_str} or later immediately. "
+                    f"Until patched, restrict network access to the affected component.")
+        if version_str:
+            return (f"Upgrade to version {version_str} or later to remediate this vulnerability. "
+                    f"Restrict access to the affected service until the update is applied.")
+        return "Upgrade to the latest patched version provided by the vendor immediately."
+
+    if "workaround" in d or "disable" in d:
+        return ("Apply the vendor-recommended workaround or disable the affected feature "
+                "until a patch is available. Monitor vendor advisories for a permanent fix.")
+
+    if "patch" in d or "fix" in d:
+        if version_str:
+            return (f"Apply the security patch that addresses this issue (fixed in version {version_str}). "
+                    f"Verify installed version and update if below the fixed release.")
+        return "Apply the available security patch from the vendor as soon as possible."
+
+    # No patch info in description — give a CVE-specific advisory link
+    nvd_link = f"https://nvd.nist.gov/vuln/detail/{cve_id}" if cve_id else "the NVD entry"
+    return (f"No patch details found in CVE description. "
+            f"Check {nvd_link} for vendor advisories and references. "
+            f"In the meantime, restrict access to the affected component and monitor for vendor patches.")
+
+
+def _store_analysis_to_db(cve_id: str, result: dict):
+    try:
+        conn = sqlite3.connect(DB)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO cve_ai_analysis
+                (cve_id, summary, affected_companies, remediation,
+                 affected_version, fixed_version, fix_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            cve_id,
+            result.get("summary", ""),
+            json.dumps(result.get("affected_companies", [])),
+            result.get("remediation", ""),
+            result.get("affected_version", "Unknown"),
+            result.get("fixed_version", "Unknown"),
+            result.get("fix_status", "Unknown"),
+        ))
+        conn.commit()
+        conn.close()
+        print(f"✅ Stored analysis to DB for {cve_id}")
+    except Exception as e:
+        print(f"⚠️ Could not store analysis for {cve_id}: {e}")
+
+
+# ============================================================
+# MAIN AI ANALYSIS FUNCTION
+# ============================================================
+
+def analyze_cve_with_ai(cve_id: str, description: str) -> dict:
+    """
+    Return AI analysis for a CVE. Flow:
+      1. USE_AI_CACHE=True → check DB cache → return if valid
+      2. USE_AI_CACHE=True → check response cache → return if valid
+      3. Call DeepSeek API → validate → store → return
+      4. Rule-based fallback if API fails
+    Always returns a fully-populated dict, never None.
+    """
+
+    # Step 1: DB cache
+    if USE_AI_CACHE:
+        try:
+            conn = sqlite3.connect(DB)
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT summary, affected_companies, remediation, "
+                "affected_version, fixed_version, fix_status "
+                "FROM cve_ai_analysis WHERE cve_id = ?",
+                (cve_id,)
+            )
+            row = cur.fetchone()
+            conn.close()
+
+            if row and row[0] and row[0].lower().strip() not in STALE_PLACEHOLDERS:
+                print(f"✅ [cache-db] {cve_id}")
+                try:
+                    companies = json.loads(row[1]) if row[1] else []
+                except Exception:
+                    companies = [row[1]] if row[1] else []
+                return {
+                    "summary":            row[0],
+                    "affected_companies": companies,
+                    "remediation":        row[2] or _rule_based_remediation(description, cve_id),
+                    "affected_version":   row[3] or "Unknown",
+                    "fixed_version":      row[4] or "Unknown",
+                    "fix_status":         row[5] or _rule_based_fix_status(description),
+                    "company":            companies[0] if companies else "Unknown",
+                }
+        except Exception as e:
+            print(f"⚠️ DB cache error for {cve_id}: {e}")
+
+    # Step 2: Response cache
+    cache_key = get_cache_key(f"{cve_id}:{description[:200]}", "analysis_v3")
+    if USE_AI_CACHE:
+        cached_raw = get_cached_ai_response(cache_key)
+        if cached_raw:
+            try:
+                result = json.loads(cached_raw)
+                # KEY FIX: skip cache if it contains stale/unavailable summaries
+                summary_val = result.get("summary", "").lower().strip()
+                if summary_val in STALE_PLACEHOLDERS or "ai analysis unavailable" in summary_val or not summary_val:
+                    print(f"🔄 [cache-stale] Bypassing stale cache for {cve_id}")
+                    try:
+                        c = sqlite3.connect(DB)
+                        c.execute("DELETE FROM ai_cache WHERE cache_key = ?", (cache_key,))
+                        c.execute("DELETE FROM cve_ai_analysis WHERE cve_id = ?", (cve_id,))
+                        c.commit(); c.close()
+                    except Exception:
+                        pass
+                else:
+                    print(f"✅ [cache-resp] {cve_id}")
+                    _store_analysis_to_db(cve_id, result)
+                    return result
+            except Exception:
+                pass
+    else:
+        print(f"🔄 [cache-off] Fresh call for {cve_id}")
+
+    # Step 3: AI API call
+    result = None
+    if USE_AI:
+        provider, api_key, model = get_ai_config()
+        print(f"🤖 [{provider}] Calling for {cve_id}...")
+        ai_data = call_ai_json(cve_id, description, provider, api_key, model)
+
+        if ai_data:
+            vendor    = ai_data.get("affected_vendor", "Unknown")
+            companies = extract_affected_companies(description)
+            if vendor and vendor not in ("Unknown", "N/A", "", "None"):
+                if vendor not in companies:
+                    companies.insert(0, vendor)
+
+            valid_statuses = {"Fix Available", "Not Fixed", "Workaround Available", "Unknown"}
+            fix_status = ai_data.get("fix_status", "Unknown")
+            if fix_status not in valid_statuses:
+                fix_status = _rule_based_fix_status(description)
+
+            remediation = ai_data.get("remediation", "").strip()
+            # Only reject remediation if it's a known useless placeholder
+            # Do NOT reject if it mentions vendor advisory — AI may have specific steps too
+            useless = ["unknown", "n/a", "none", ""]
+            is_useless = (
+                not remediation
+                or remediation.lower() in useless
+                or remediation.lower() == "apply all recommended mitigations"
+                or remediation.lower() == "apply recommended mitigations"
+                or remediation.lower() == "review vendor advisory"
+            )
+            if is_useless:
+                remediation = _rule_based_remediation(description, cve_id)
+
+            result = {
+                "summary":            ai_data.get("summary", "No summary available"),
+                "affected_companies": companies,
+                "remediation":        remediation,
+                "affected_version":   ai_data.get("affected_version", "Unknown"),
+                "fixed_version":      ai_data.get("fixed_version", "Unknown"),
+                "fix_status":         fix_status,
+                "company":            companies[0] if companies else "Unknown",
+            }
+            print(f"   fix_status:  {result['fix_status']}")
+            print(f"   remediation: {result['remediation'][:80]}...")
+
+    # Step 4: Rule-based fallback
+    if result is None:
+        provider_check, key_check, _ = get_ai_config()
+        if not key_check and provider_check != "ollama":
+            print(f"⚠️ [fallback] {cve_id} — NO API KEY SET. Go to /settings to add your {provider_check} key.")
+        else:
+            print(f"⚠️ [fallback] {cve_id} — AI call failed, using rule-based fallback")
+        companies = extract_affected_companies(description)
+        result = {
+            "summary":            "AI analysis unavailable — review description manually.",
+            "affected_companies": companies,
+            "remediation":        _rule_based_remediation(description, cve_id),
+            "affected_version":   "Unknown",
+            "fixed_version":      "Unknown",
+            "fix_status":         _rule_based_fix_status(description),
+            "company":            companies[0] if companies else "Unknown",
+            "_is_fallback":       True,   # marker — do NOT cache this
+        }
+
+    # Step 5: Persist — only cache REAL AI results, never fallback
+    is_fallback = result.pop("_is_fallback", False)
+    if not is_fallback:
+        if USE_AI_CACHE:
+            cache_ai_response(cache_key, json.dumps(result))
+        _store_analysis_to_db(cve_id, result)
+    else:
+        # Store fallback to DB so UI shows something, but NOT to ai_cache
+        # so it retries on next page load once user adds their API key
+        _store_analysis_to_db(cve_id, result)
+
+    return result
+
+
+# ============================================================
+# DATABASE HELPERS
+# ============================================================
 
 def get_db_connection():
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
     return conn
+
 
 def calculate_severity(score):
     if score is None:
@@ -1013,70 +933,93 @@ def calculate_severity(score):
     except (ValueError, TypeError):
         return "Unknown"
 
-# ============================================================
-# UTILITY
-# ============================================================
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-KNOWN_VENDORS = [
-    "Microsoft","Apple","Google","Amazon","Meta","Facebook","Twitter",
-    "Linux","Windows","Adobe","Oracle","IBM","Intel","AMD","NVIDIA",
-    "Cisco","Dell","HP","Lenovo","Samsung","Sony","Tenda","TP-Link",
-    "D-Link","Netgear","Asus","Linksys","Bosch","Alps Alpine","Harman",
-    "Nissan","Tesla","Ford","Toyota","Honda","Volkswagen","BMW","Mercedes",
-    "Qualcomm","MediaTek","Broadcom","Texas Instruments","Infineon",
-    "STMicroelectronics","Renesas","NXP","Microchip","Analog Devices",
-    "Apache","Nginx","Red Hat","Canonical","Ubuntu","Debian","Fedora",
-    "SUSE","VMware","Docker","Kubernetes","GitHub","GitLab","Atlassian",
-    "WordPress","Drupal","Joomla","Magento","Shopify","WooCommerce",
-    "Siemens","Schneider","Rockwell","Honeywell","ABB","Mitsubishi",
-]
 
-def extract_affected_companies(description: str) -> list:
-    dl    = description.lower()
-    found = [v for v in KNOWN_VENDORS if v.lower() in dl]
-    return found
+def extract_keywords_from_file(filepath, filename):
+    ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
+    print(f"📄 Extracting from {ext} file: {filename}")
+    keywords = set()
 
-# ============================================================
-# RULE-BASED HELPERS
-# ============================================================
+    try:
+        if ext == 'txt':
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    kw = line.strip()
+                    if kw and not kw.startswith('#'):
+                        keywords.add(kw.lower())
 
-def _rule_based_fix_status(description: str) -> str:
-    d = description.lower()
-    if any(t in d for t in ["fixed in","patched in","update to","upgrade to"]):
-        return "Fix Available"
-    if any(t in d for t in ["no fix","unpatched","no patch"]):
-        return "Not Fixed"
-    if any(t in d for t in ["workaround","mitigation"]):
-        return "Workaround Available"
-    return "Unknown"
+        elif ext == 'csv':
+            df = pd.read_csv(filepath)
+            for col in df.columns:
+                if any(k in col.lower() for k in ['keyword','component','package','name','product','software']):
+                    for val in df[col].dropna():
+                        keywords.add(str(val).lower().strip())
+                    break
+            else:
+                for val in df.iloc[:, 0].dropna():
+                    keywords.add(str(val).lower().strip())
 
-def _rule_based_remediation(description: str, cve_id: str = "") -> str:
-    d = description.lower()
-    if "update" in d or "upgrade" in d:
-        return "Upgrade to the latest patched version immediately."
-    if "workaround" in d or "disable" in d:
-        return "Apply vendor-recommended workaround until patch is available."
-    if "patch" in d or "fix" in d:
-        return "Apply the available security patch as soon as possible."
-    return f"Check https://nvd.nist.gov/vuln/detail/{cve_id} for vendor advisories."
+        elif ext in ['xlsx', 'xls']:
+            df = pd.read_excel(filepath)
+            for col in df.columns:
+                if any(k in col.lower() for k in ['keyword','component','package','name','product','software']):
+                    for val in df[col].dropna():
+                        keywords.add(str(val).lower().strip())
+                    break
+            else:
+                for val in df.iloc[:, 0].dropna():
+                    keywords.add(str(val).lower().strip())
 
-# ============================================================
-# ENRICH ROW
-# ============================================================
+        elif ext == 'json':
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, str):
+                        keywords.add(item.lower())
+                    elif isinstance(item, dict):
+                        for key in ['keyword','component','name','product']:
+                            if key in item:
+                                keywords.add(str(item[key]).lower())
+
+        elif ext == 'xml':
+            tree = ET.parse(filepath)
+            root = tree.getroot()
+            for tag in ['keyword','component','name','product']:
+                for elem in root.findall(f'.//{tag}'):
+                    if elem.text:
+                        keywords.add(elem.text.lower())
+
+    except Exception as e:
+        print(f"Error extracting keywords: {e}")
+        return []
+
+    cleaned = []
+    for kw in keywords:
+        if kw and len(kw) < 100 and kw not in ['nan','none','null']:
+            c = re.sub(r'[^a-zA-Z0-9\s\.\-]', '', kw).strip()
+            if c and len(c) > 1:
+                cleaned.append(c)
+
+    print(f"✅ Extracted {len(cleaned)} keywords: {cleaned[:5]}")
+    return cleaned
+
 
 def _enrich_row(row_dict, use_ai=False):
-    row_dict["severity"]           = calculate_severity(row_dict.get("cvss_score"))
-    row_dict["published_date"]     = row_dict.get(DATE_COLUMN, "N/A")
-    row_dict.setdefault("ai_summary",        None)
+    """Enrich a CVE row. Never calls DeepSeek — loads from DB cache only."""
+    row_dict["severity"]       = calculate_severity(row_dict.get("cvss_score"))
+    row_dict["published_date"] = row_dict.get(DATE_COLUMN, "N/A")
+
+    row_dict.setdefault("ai_summary", None)
     row_dict.setdefault("affected_companies", [])
-    row_dict.setdefault("remediation",        None)
-    row_dict.setdefault("affected_version",  "Unknown")
-    row_dict.setdefault("fixed_version",     "Unknown")
-    row_dict.setdefault("fix_status",        "Unknown")
-    row_dict.setdefault("matched_keywords",  [])
+    row_dict.setdefault("remediation", None)
+    row_dict.setdefault("affected_version", "Unknown")
+    row_dict.setdefault("fixed_version", "Unknown")
+    row_dict.setdefault("fix_status", "Unknown")
+    row_dict.setdefault("matched_keywords", [])
 
     try:
         conn = sqlite3.connect(DB)
@@ -1089,12 +1032,13 @@ def _enrich_row(row_dict, use_ai=False):
         )
         ai_row = cur.fetchone()
         conn.close()
+
         if ai_row and ai_row[0] and ai_row[0].lower().strip() not in STALE_PLACEHOLDERS:
             try:
                 companies = json.loads(ai_row[1]) if ai_row[1] else []
             except Exception:
                 companies = [ai_row[1]] if ai_row[1] else []
-            row_dict["ai_summary"]        = ai_row[0]
+            row_dict["ai_summary"]         = ai_row[0]
             row_dict["affected_companies"] = companies
             row_dict["remediation"]        = ai_row[2] or ""
             row_dict["affected_version"]   = ai_row[3] or "Unknown"
@@ -1102,20 +1046,18 @@ def _enrich_row(row_dict, use_ai=False):
             row_dict["fix_status"]         = ai_row[5] or "Unknown"
             return row_dict
     except Exception as e:
-        print(f"⚠️  DB cache read error for {row_dict.get('cve_id')}: {e}")
+        print(f"⚠️ DB cache read error for {row_dict['cve_id']}: {e}")
 
-    row_dict["affected_companies"] = extract_affected_companies(row_dict.get("description",""))
-    row_dict["fix_status"]         = _rule_based_fix_status(row_dict.get("description",""))
-    row_dict["remediation"]        = _rule_based_remediation(row_dict.get("description",""), row_dict.get("cve_id",""))
+    row_dict["affected_companies"] = extract_affected_companies(row_dict.get("description", ""))
+    row_dict["fix_status"]         = _rule_based_fix_status(row_dict.get("description", ""))
+    row_dict["remediation"]        = _rule_based_remediation(row_dict.get("description", ""), row_dict.get("cve_id", ""))
     return row_dict
 
-# ============================================================
-# CVE SEARCH
-# ============================================================
 
 def search_cves_by_keywords(keywords, severity_filter=None, page=1, per_page=50, use_ai=False):
     conn   = get_db_connection()
     cursor = conn.cursor()
+
     if not keywords:
         return [], 0
 
@@ -1124,18 +1066,17 @@ def search_cves_by_keywords(keywords, severity_filter=None, page=1, per_page=50,
         if kw and len(kw) > 1:
             conditions.append("description LIKE ?")
             params.append(f"%{kw}%")
+
     if not conditions:
         return [], 0
 
     query = "SELECT * FROM cves WHERE " + " OR ".join(conditions)
-    if severity_filter == "Critical":
-        query += " AND cvss_score >= 9.0"
-    elif severity_filter == "High":
-        query += " AND cvss_score >= 7.0 AND cvss_score < 9.0"
-    elif severity_filter == "Medium":
-        query += " AND cvss_score >= 4.0 AND cvss_score < 7.0"
-    elif severity_filter == "Low":
-        query += " AND cvss_score > 0 AND cvss_score < 4.0"
+
+    if severity_filter:
+        if   severity_filter == "Critical": query += " AND cvss_score >= 9.0"
+        elif severity_filter == "High":     query += " AND cvss_score >= 7.0 AND cvss_score < 9.0"
+        elif severity_filter == "Medium":   query += " AND cvss_score >= 4.0 AND cvss_score < 7.0"
+        elif severity_filter == "Low":      query += " AND cvss_score > 0 AND cvss_score < 4.0"
 
     count_q = query.replace("SELECT *", "SELECT COUNT(*) as count")
     cursor.execute(count_q, params)
@@ -1144,219 +1085,48 @@ def search_cves_by_keywords(keywords, severity_filter=None, page=1, per_page=50,
 
     query += f" ORDER BY {DATE_COLUMN} DESC LIMIT ? OFFSET ?"
     params.extend([per_page, (page - 1) * per_page])
+
     try:
         cursor.execute(query, params)
-    except sqlite3.OperationalError:
+        rows = cursor.fetchall()
+    except sqlite3.OperationalError as e:
+        print(f"⚠️ Ordering error: {e}")
         query = query.replace(f" ORDER BY {DATE_COLUMN} DESC", "")
         cursor.execute(query, params)
-    rows = cursor.fetchall()
+        rows = cursor.fetchall()
+
     conn.close()
 
     cves = []
     for row in rows:
         rd = dict(row)
-        dl = (rd.get("description") or "").lower()
-        rd["matched_keywords"] = [kw for kw in keywords if kw.lower() in dl]
+        desc_lower = (rd.get("description") or "").lower()
+        rd["matched_keywords"] = [kw for kw in keywords if kw.lower() in desc_lower]
         rd = _enrich_row(rd, use_ai=use_ai)
         cves.append(rd)
+
     return cves, total
 
-# ============================================================
-# ROUTES — STATS
-# ============================================================
-
-@app.route("/stats")
-def stats():
-    try:
-        conn   = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM cves")
-        total    = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 9.0")
-        critical = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 7.0 AND cvss_score < 9.0")
-        high     = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score >= 4.0 AND cvss_score < 7.0")
-        medium   = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM cves WHERE cvss_score > 0 AND cvss_score < 4.0")
-        low      = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM cve_ai_analysis")
-        ai_count = cursor.fetchone()[0]
-        cursor.execute("SELECT MIN(published), MAX(published) FROM cves")
-        row    = cursor.fetchone()
-        oldest = row[0] if row else None
-        newest = row[1] if row else None
-
-        # NEW in last 7 days — try PostgreSQL first, fall back to SQLite published date
-        new_7_days = 0
-        if postgres_pool:
-            try:
-                pg_conn = postgres_pool.getconn()
-                pg_cur  = pg_conn.cursor()
-                pg_cur.execute("""
-                    SELECT COUNT(*) FROM cve_tracking
-                    WHERE first_seen_date >= NOW() - INTERVAL '7 days'
-                """)
-                new_7_days = pg_cur.fetchone()[0]
-                pg_cur.close()
-                postgres_pool.putconn(pg_conn)
-            except Exception:
-                pass
-
-        # Fallback: count by published date in SQLite
-        if new_7_days == 0:
-            try:
-                cursor.execute("""
-                    SELECT COUNT(*) FROM cves
-                    WHERE julianday('now') - julianday(published) <= 7
-                """)
-                new_7_days = cursor.fetchone()[0]
-            except Exception:
-                pass
-
-        conn.close()
-
-        date_range = "No data"
-        if oldest and newest:
-            date_range = f"{oldest[:10]} – {newest[:10]}"
-
-        # Last update time
-        last_update = get_last_update_time()
-        last_update_str = None
-        if last_update:
-            # Format in user-friendly way: "Mar 10, 2026, 05:44 PM"
-            last_update_str = last_update.strftime("%b %d, %Y, %I:%M %p UTC").replace(" 0", " ")
-
-        return jsonify({
-            "total_cves":    total,
-            "critical":      critical,
-            "high":          high,
-            "medium":        medium,
-            "low":           low,
-            "ai_enhanced":   ai_count,
-            "oldest_cve":    oldest,
-            "newest_cve":    newest,
-            "date_range":    date_range,
-            "new_7_days":    new_7_days,
-            "last_update":   last_update_str,
-        })
-    except Exception as e:
-        print(f"❌ /stats error: {e}")
-        return jsonify({"total_cves":0,"critical":0,"high":0,"medium":0,"low":0,
-                        "ai_enhanced":0,"oldest_cve":None,"newest_cve":None,
-                        "date_range":"Error","new_7_days":0,"last_update":None})
-
-
-@app.route("/keyword-stats")
-@app.route("/keyword-stats")
-def keyword_stats():
-    """Return total + severity breakdown, filtered by keywords if provided."""
-    keywords_raw = request.args.get("keywords", "")
-    severity     = request.args.get("severity", "")
-    keywords     = [k.strip() for k in keywords_raw.split(',') if k.strip()] if keywords_raw else []
-
-    try:
-        conn   = get_db_connection()
-        cursor = conn.cursor()
-
-        # Build keyword filter
-        if keywords:
-            kw_conds  = " OR ".join(["description LIKE ?" for _ in keywords])
-            kw_where  = f"WHERE ({kw_conds})"
-            kw_params = [f"%{kw}%" for kw in keywords]
-        else:
-            kw_where  = ""
-            kw_params = []
-
-        # Build severity filter on top
-        sev_clause = ""
-        if severity == "Critical":
-            sev_clause = f" {'AND' if kw_where else 'WHERE'} cvss_score >= 9.0"
-        elif severity == "High":
-            sev_clause = f" {'AND' if kw_where else 'WHERE'} cvss_score >= 7.0 AND cvss_score < 9.0"
-        elif severity == "Medium":
-            sev_clause = f" {'AND' if kw_where else 'WHERE'} cvss_score >= 4.0 AND cvss_score < 7.0"
-        elif severity == "Low":
-            sev_clause = f" {'AND' if kw_where else 'WHERE'} cvss_score > 0 AND cvss_score < 4.0"
-
-        full_where = kw_where + sev_clause
-        sep        = "AND" if kw_where else "WHERE"
-
-        def count(extra=""):
-            q = f"SELECT COUNT(*) FROM cves {full_where} {extra}"
-            cursor.execute(q, kw_params)
-            return cursor.fetchone()[0]
-
-        total    = count()
-        critical = count(f"{sep} cvss_score >= 9.0")
-        high     = count(f"{sep} cvss_score >= 7.0 AND cvss_score < 9.0")
-        medium   = count(f"{sep} cvss_score >= 4.0 AND cvss_score < 7.0")
-        low      = count(f"{sep} cvss_score > 0 AND cvss_score < 4.0")
-        conn.close()
-
-        return jsonify({
-            "total":    total,
-            "critical": critical,
-            "high":     high,
-            "medium":   medium,
-            "low":      low,
-            "filtered": bool(keywords),
-        })
-    except Exception as e:
-        print(f"❌ /keyword-stats error: {e}")
-        import traceback; traceback.print_exc()
-        return jsonify({"total": 0, "critical": 0, "high": 0, "medium": 0, "low": 0, "filtered": False})
-
-
-@app.route("/keyword-counts")
-def keyword_counts():
-    """Return per-keyword total CVE counts."""
-    keywords_raw = request.args.get("keywords", "")
-    severity     = request.args.get("severity", "")
-    keywords     = [k.strip() for k in keywords_raw.split(',') if k.strip()]
-    counts       = {}
-    if not keywords:
-        return jsonify(counts)
-    try:
-        conn   = sqlite3.connect(DB)
-        cursor = conn.cursor()
-        for kw in keywords:
-            sev_clause = ""
-            if severity == "Critical":
-                sev_clause = " AND cvss_score >= 9.0"
-            elif severity == "High":
-                sev_clause = " AND cvss_score >= 7.0 AND cvss_score < 9.0"
-            elif severity == "Medium":
-                sev_clause = " AND cvss_score >= 4.0 AND cvss_score < 7.0"
-            elif severity == "Low":
-                sev_clause = " AND cvss_score > 0 AND cvss_score < 4.0"
-            cursor.execute(
-                f"SELECT COUNT(*) FROM cves WHERE LOWER(description) LIKE ?{sev_clause}",
-                (f"%{kw.lower()}%",)
-            )
-            counts[kw] = cursor.fetchone()[0]
-        conn.close()
-    except Exception as e:
-        print(f"❌ /keyword-counts error: {e}")
-    return jsonify(counts)
 
 # ============================================================
-# ROUTES — MAIN SEARCH + INDEX
+# ROUTES
 # ============================================================
 
 @app.route("/search", methods=["POST"])
 def search_post():
-    keyword      = request.form.get("keyword", "").strip()
-    keywords_text = request.form.get("keywords", "")
-    severity_filter = request.form.get("severity") or request.form.get("severity_multi") or request.form.get("severity_bom") or ""
-    use_ai = request.form.get("use_ai", "false") == "true"
-    tab    = request.form.get("tab", "single")
+    """POST-based search so keywords don't appear in URL."""
+    keyword         = request.form.get("keyword", "").strip()
+    keywords_text   = request.form.get("keywords", "")
+    severity_filter = request.form.get("severity", "")
+    use_ai          = request.form.get("use_ai", "false") == "true"
+    tab             = request.form.get("tab", "single")
 
     if keywords_text:
         keywords = [k.strip() for k in keywords_text.split("\n") if k.strip()]
-        kw_enc   = _obfuscate(",".join(keywords[:20]))
+        kw_enc = _obfuscate(",".join(keywords[:20]))
     elif keyword:
-        kw_enc   = _obfuscate(keyword)
+        kw_enc = _obfuscate(keyword)
+        keywords = [keyword]
     else:
         return redirect(url_for("index"))
 
@@ -1369,833 +1139,1846 @@ def search_post():
 
 @app.route("/", methods=["GET"])
 def index():
+    # Decode obfuscated URL params
     kw_enc          = request.args.get("kw", "")
     sv_enc          = request.args.get("sv", "")
     keywords_param  = _deobfuscate(kw_enc) if kw_enc else request.args.get("keywords", "")
     severity_filter = _deobfuscate(sv_enc) if sv_enc else request.args.get("severity", "")
+    search_mode     = request.args.get("search_mode", "single")
     keyword         = request.args.get("keyword", "")
     page            = int(request.args.get("page", 1))
-    use_ai          = request.args.get("use_ai", "false") in ("true", "1")
+    # Check both 'ai' and 'use_ai' params — 'true'/'1' from either means enabled
+    _ai_a  = request.args.get("ai", "")
+    _ai_b  = request.args.get("use_ai", "false")
+    use_ai = (_ai_a in ("1", "true")) or (_ai_b in ("1", "true"))
 
-    try:
-        if keywords_param:
-            keywords = [k.strip() for k in keywords_param.split(',') if k.strip()]
-            cves, total = search_cves_by_keywords(keywords, severity_filter, page, use_ai=use_ai)
-            active_keywords = keywords
-        elif keyword:
-            cves, total = search_cves_by_keywords([keyword], severity_filter, page, use_ai=use_ai)
-            active_keywords = [keyword]
-        else:
-            conn   = get_db_connection()
-            cursor = conn.cursor()
-            try:
-                cursor.execute(f"SELECT * FROM cves ORDER BY {DATE_COLUMN} DESC LIMIT 50")
-            except Exception:
-                cursor.execute("SELECT * FROM cves LIMIT 50")
-            rows = cursor.fetchall()
-            conn.close()
-            cves = []
-            for row in rows:
-                rd = dict(row)
-                rd["matched_keywords"] = []
-                rd = _enrich_row(rd, use_ai=use_ai)
-                cves.append(rd)
-            active_keywords = []
-            total = len(cves)
+    if keywords_param:
+        keywords = [k.strip() for k in keywords_param.split(',') if k.strip()]
+        cves, total = search_cves_by_keywords(keywords, severity_filter, page, use_ai=use_ai)
+        active_keywords = keywords
 
-        # Mark new CVEs from PostgreSQL tracking
-        if postgres_pool and cves:
-            try:
-                conn = postgres_pool.getconn()
-                cur  = conn.cursor()
-                cur.execute("""
-                    SELECT cve_id FROM cve_tracking
-                    WHERE first_seen_date > NOW() - INTERVAL '7 days' AND is_new = TRUE
-                """)
-                new_set = {r[0] for r in cur.fetchall()}
-                for cve in cves:
-                    cve['is_new'] = cve['cve_id'] in new_set
-                cur.close()
-                postgres_pool.putconn(conn)
-            except Exception:
-                pass
+    elif search_mode == "single" and keyword:
+        cves, total = search_cves_by_keywords([keyword], severity_filter, page, use_ai=use_ai)
+        active_keywords = [keyword]
 
-        total_pages = max(1, (total // 50) + (1 if total % 50 > 0 else 0))
+    else:
+        conn   = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(f"SELECT * FROM cves ORDER BY {DATE_COLUMN} DESC LIMIT 50")
+        except Exception:
+            cursor.execute("SELECT * FROM cves LIMIT 50")
+        rows = cursor.fetchall()
+        conn.close()
 
-        return render_template(
-            "index.html",
-            view="dashboard",
-            cves=cves,
-            keyword=keyword,
-            severity_filter=severity_filter,
-            active_keywords=active_keywords,
-            page=page,
-            total_pages=total_pages,
-            use_ai=use_ai,
-            env_boms=ENV_BOMS,
-        )
-    except Exception as e:
-        print(f"❌ index error: {e}")
-        import traceback; traceback.print_exc()
-        return render_template(
-            "index.html",
-            view="dashboard",
-            cves=[], keyword=keyword, severity_filter=severity_filter,
-            active_keywords=[], page=1, total_pages=1,
-            use_ai=use_ai, env_boms=ENV_BOMS,
-        )
+        cves = []
+        for row in rows:
+            rd = dict(row)
+            rd["matched_keywords"] = []
+            rd = _enrich_row(rd, use_ai=use_ai)
+            cves.append(rd)
 
-# ============================================================
-# ROUTES — BOM UPLOAD
-# ============================================================
+        active_keywords = []
+        keyword = ""
+        total   = len(cves)
 
-def _parse_bom_file(file) -> list:
-    """Extract keyword list from an uploaded BOM file."""
-    filename  = secure_filename(file.filename)
-    ext       = filename.rsplit('.', 1)[-1].lower()
-    keywords  = []
+    total_pages = (total // 50) + (1 if total % 50 > 0 else 0) if total else 1
 
-    if ext == 'txt':
-        text = file.read().decode('utf-8', errors='ignore')
-        keywords = [line.strip() for line in text.splitlines() if line.strip()]
-
-    elif ext == 'csv':
-        text   = file.read().decode('utf-8', errors='ignore')
-        reader = csv.reader(io.StringIO(text))
-        for row in reader:
-            for cell in row:
-                val = cell.strip()
-                if val:
-                    keywords.append(val)
-
-    elif ext in ('xlsx', 'xls'):
-        import openpyxl
-        wb = openpyxl.load_workbook(io.BytesIO(file.read()), read_only=True, data_only=True)
-        for sheet in wb.worksheets:
-            for row in sheet.iter_rows(values_only=True):
-                for cell in row:
-                    if cell:
-                        keywords.append(str(cell).strip())
-        wb.close()
-
-    elif ext == 'json':
-        data = json.loads(file.read().decode('utf-8', errors='ignore'))
-        if isinstance(data, list):
-            for item in data:
-                if isinstance(item, str):
-                    keywords.append(item.strip())
-                elif isinstance(item, dict):
-                    for v in item.values():
-                        keywords.append(str(v).strip())
-        elif isinstance(data, dict):
-            for v in data.values():
-                keywords.append(str(v).strip())
-
-    elif ext == 'xml':
-        root = ET.fromstring(file.read().decode('utf-8', errors='ignore'))
-        for elem in root.iter():
-            if elem.text and elem.text.strip():
-                keywords.append(elem.text.strip())
-
-    return [k for k in keywords if k and len(k) > 1][:200]
+    return render_template(
+        "index.html",
+        cves=cves,
+        keyword=keyword,
+        severity_filter=severity_filter,
+        active_keywords=active_keywords,
+        page=page,
+        total_pages=total_pages,
+        use_ai=use_ai
+    )
 
 
 @app.route("/upload-bom", methods=["POST"])
 def upload_bom():
     if 'bom_file' not in request.files:
         return redirect(url_for('index', error='No file uploaded'))
-    f = request.files['bom_file']
-    if not f or not allowed_file(f.filename):
-        return redirect(url_for('index', error='Invalid file type'))
+    file            = request.files['bom_file']
+    severity_filter = request.form.get("severity_bom", "")
+    use_ai          = request.form.get("use_ai_bom", "false") == "true"
+    if file.filename == '':
+        return redirect(url_for('index', error='No file selected'))
+    if file and allowed_file(file.filename):
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        try:
+            file.save(filepath)
+            keywords = extract_keywords_from_file(filepath, filename)
+            os.remove(filepath)
+            if not keywords:
+                return redirect(url_for('index', error='No valid keywords found in file'))
+            kw_str = ','.join([quote(k) for k in keywords[:20]])
+            return redirect(f"/?keywords={kw_str}&severity={severity_filter}&use_ai={'true' if use_ai else 'false'}&tab=bom")
+        except Exception as e:
+            return redirect(url_for('index', error=f'Error processing file: {str(e)}'))
+    return redirect(url_for('index', error='Invalid file type'))
 
-    severity = request.form.get('severity_bom', '')
-    use_ai   = request.form.get('use_ai_bom', 'false') == 'true'
 
-    try:
-        keywords = _parse_bom_file(f)
-        if not keywords:
-            return redirect(url_for('index', error='No keywords found in file'))
-        kw_enc  = _obfuscate(",".join(keywords))
-        sev_enc = _obfuscate(severity) if severity else ""
-        return redirect(url_for('index',
-            kw=kw_enc, sv=sev_enc,
-            use_ai="true" if use_ai else "false",
-            tab="bom", page=1))
-    except Exception as e:
-        print(f"❌ BOM upload error: {e}")
-        return redirect(url_for('index', error=f'Parse error: {str(e)}'))
+@app.route("/multi-keyword", methods=["POST"])
+def multi_keyword():
+    keywords_text   = request.form.get("keywords", "")
+    severity_filter = request.form.get("severity_multi", "")
+    use_ai          = request.form.get("use_ai_multi", "false") == "true"
+    keywords = [k.strip() for k in keywords_text.split('\n') if k.strip()]
+    if not keywords:
+        return redirect(url_for('index', error='No keywords provided'))
+    kw_str = ','.join([quote(k) for k in keywords[:20]])
+    return redirect(f"/?keywords={kw_str}&severity={severity_filter}&use_ai={'true' if use_ai else 'false'}&tab=multi")
 
-# ============================================================
-# ROUTES — EXPORT
-# ============================================================
 
 @app.route("/export")
-def export_csv():
-    keywords_raw    = request.args.get("keywords", "")
+def export_results():
+    keywords_param  = request.args.get("keywords", "")
     severity_filter = request.args.get("severity", "")
-    keywords        = [k.strip() for k in keywords_raw.split(',') if k.strip()]
-    if not keywords:
-        return "No keywords specified", 400
+    if not keywords_param:
+        return "No keywords provided", 400
+    keywords = [k.strip() for k in keywords_param.split(',') if k.strip()]
+    cves, _  = search_cves_by_keywords(keywords, severity_filter, page=1, per_page=1000, use_ai=True)
 
-    cves, _ = search_cves_by_keywords(keywords, severity_filter, page=1, per_page=5000)
-    output  = io.StringIO()
-    writer  = csv.DictWriter(output, fieldnames=[
-        "cve_id","cvss_score","severity","published",
-        "fix_status","affected_version","fixed_version",
-        "affected_companies","matched_keywords","description"
-    ])
-    writer.writeheader()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['CVE ID','CVSS Score','Severity','Published','Description',
+                     'AI Summary','Affected Version','Fixed Version','Fix Status',
+                     'Affected Companies','Remediation','Matched Keywords'])
     for cve in cves:
-        writer.writerow({
-            "cve_id":            cve.get("cve_id",""),
-            "cvss_score":        cve.get("cvss_score",""),
-            "severity":          cve.get("severity",""),
-            "published":         cve.get("published",""),
-            "fix_status":        cve.get("fix_status",""),
-            "affected_version":  cve.get("affected_version",""),
-            "fixed_version":     cve.get("fixed_version",""),
-            "affected_companies":";".join(cve.get("affected_companies") or []),
-            "matched_keywords":  ";".join(cve.get("matched_keywords") or []),
-            "description":       (cve.get("description") or "")[:500],
-        })
-
+        writer.writerow([
+            cve.get('cve_id',''),
+            cve.get('cvss_score',''),
+            cve.get('severity',''),
+            (cve.get('published_date','') or '')[:10],
+            (cve.get('description','') or '').replace('\n',' '),
+            (cve.get('ai_summary','') or '').replace('\n',' '),
+            cve.get('affected_version','Unknown'),
+            cve.get('fixed_version','Unknown'),
+            cve.get('fix_status','Unknown'),
+            ', '.join(cve.get('affected_companies',[])),
+            (cve.get('remediation','') or '').replace('\n',' '),
+            ', '.join(cve.get('matched_keywords',[])),
+        ])
     output.seek(0)
-    return Response(
-        output.getvalue(),
-        mimetype="text/csv",
-        headers={"Content-Disposition":
-                 f"attachment; filename=cve_export_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"}
-    )
+    return Response(output.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment;filename=cve_analysis_report.csv"})
 
-# ============================================================
-# ROUTES — AI ANALYSIS
-# ============================================================
-
-def _call_ai_api(provider: str, api_key: str, model: str, prompt: str) -> str | None:
-    try:
-        if provider == "ollama":
-            resp = requests.post(OLLAMA_URL, json={"model": model, "prompt": prompt, "stream": False}, timeout=30)
-            if resp.status_code == 200:
-                return resp.json().get("response","")
-            return None
-
-        if provider == "claude":
-            headers = {
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "Content-Type": "application/json",
-            }
-            payload = {"model": model, "max_tokens": 512,
-                       "messages": [{"role":"user","content": prompt}]}
-            resp = requests.post(CLAUDE_API_URL, json=payload, headers=headers, timeout=30)
-            if resp.status_code == 200:
-                return resp.json()["content"][0]["text"]
-            return None
-
-        # OpenAI / DeepSeek compatible
-        url     = DEEPSEEK_API_URL if provider == "deepseek" else OPENAI_API_URL
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        payload = {"model": model, "max_tokens": 512,
-                   "messages": [{"role":"user","content": prompt}]}
-        resp = requests.post(url, json=payload, headers=headers, timeout=30)
-        if resp.status_code == 200:
-            return resp.json()["choices"][0]["message"]["content"]
-        return None
-    except Exception as e:
-        print(f"⚠️  AI call error ({provider}): {e}")
-        return None
-
-
-def _ai_analyse_one(cve_id: str, description: str, provider: str, api_key: str, model: str) -> dict:
-    prompt = f"""Analyse this CVE briefly and return JSON only (no markdown).
-
-CVE: {cve_id}
-Description: {description[:800]}
-
-Return ONLY valid JSON with these keys:
-{{
-  "summary": "2-3 sentence plain English summary",
-  "affected_version": "affected version string or Unknown",
-  "fixed_version": "fixed version or Unknown",
-  "fix_status": "Fix Available|Not Fixed|Workaround Available|Unknown",
-  "remediation": "1-2 sentence actionable advice"
-}}"""
-
-    cache_key = hashlib.md5(f"{provider}{model}{cve_id}".encode()).hexdigest()
-    try:
-        conn = sqlite3.connect(DB)
-        cur  = conn.cursor()
-        cur.execute("SELECT response FROM ai_cache WHERE cache_key = ?", (cache_key,))
-        row  = cur.fetchone()
-        conn.close()
-        if row:
-            return json.loads(row[0])
-    except Exception:
-        pass
-
-    raw = _call_ai_api(provider, api_key, model, prompt)
-    if not raw:
-        return {"error": "AI call failed"}
-
-    # Strip markdown fences if present
-    raw = re.sub(r"```json|```", "", raw).strip()
-    try:
-        data = json.loads(raw)
-    except Exception:
-        # Try to extract JSON object
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if m:
-            try:
-                data = json.loads(m.group())
-            except Exception:
-                return {"error": "JSON parse failed"}
-        else:
-            return {"error": "No JSON found"}
-
-    # Persist to SQLite cache + ai_analysis table
-    try:
-        conn = sqlite3.connect(DB)
-        cur  = conn.cursor()
-        cur.execute(
-            "INSERT OR REPLACE INTO ai_cache (cache_key, response) VALUES (?,?)",
-            (cache_key, json.dumps(data))
-        )
-        cur.execute("""
-            INSERT OR REPLACE INTO cve_ai_analysis
-                (cve_id, summary, affected_companies, remediation,
-                 affected_version, fixed_version, fix_status)
-            VALUES (?,?,?,?,?,?,?)
-        """, (
-            cve_id,
-            data.get("summary",""),
-            json.dumps([]),
-            data.get("remediation",""),
-            data.get("affected_version","Unknown"),
-            data.get("fixed_version","Unknown"),
-            data.get("fix_status","Unknown"),
-        ))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"⚠️  AI cache write error: {e}")
-
-    return data
-
-
-@app.route("/api/ai-analyze", methods=["POST"])
-def ai_analyze():
-    provider, api_key, model = get_ai_config()
-    if not api_key or (provider != "ollama" and len(api_key) < 8):
-        return jsonify({"error": "No API key configured"}), 400
-
-    payload = request.get_json(silent=True) or {}
-    cves    = payload.get("cves", [])
-    if not cves:
-        return jsonify({}), 400
-
-    results = {}
-    for item in cves[:10]:          # cap per request
-        cve_id = item.get("cve_id","")
-        desc   = item.get("description","")
-        if cve_id:
-            results[cve_id] = _ai_analyse_one(cve_id, desc, provider, api_key, model)
-
-    return jsonify(results)
 
 
 @app.route("/api/ai-status")
-def ai_status():
+def api_ai_status():
+    """Returns whether an AI key is configured in the current session."""
     provider, api_key, model = get_ai_config()
-    has_key = bool(api_key and len(api_key) > 8)
     return jsonify({
-        "ai_enabled": USE_AI,
-        "has_key":    has_key,
         "provider":   provider,
         "model":      model,
+        "has_key":    bool(api_key and provider != "ollama") or provider == "ollama",
+        "ai_enabled": USE_AI,
     })
 
+# ── Stats cache — built once at startup, refreshed every 5 min ───────────
+_stats_cache      = {}
+_stats_cache_ts   = 0
+
+def _build_stats_cache():
+    """Pre-compute stats so /stats never runs a slow COUNT on 335K rows live."""
+    global _stats_cache, _stats_cache_ts
+    try:
+        conn   = sqlite3.connect(DB, timeout=60)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cves'")
+        if not cursor.fetchone():
+            conn.close(); return
+        # Single pass — much faster than 6 separate COUNTs
+        cursor.execute("""
+            SELECT
+                COUNT(*),
+                SUM(CASE WHEN cvss_score >= 9.0 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN cvss_score >= 7.0 AND cvss_score < 9.0 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN cvss_score >= 4.0 AND cvss_score < 7.0 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN cvss_score > 0   AND cvss_score < 4.0 THEN 1 ELSE 0 END),
+                MIN(published), MAX(published)
+            FROM cves
+        """)
+        total, crit, high, med, low, oldest, newest = cursor.fetchone()
+        cursor.execute("SELECT COUNT(*) FROM cve_ai_analysis")
+        ai_enhanced = cursor.fetchone()[0]
+        # New CVEs in last 7 days
+        cursor.execute("SELECT COUNT(*) FROM cves WHERE published >= date('now','-7 days')")
+        new7 = cursor.fetchone()[0]
+        conn.close()
+        _stats_cache = {
+            "total_cves": total or 0,
+            "critical":   int(crit  or 0),
+            "high":       int(high  or 0),
+            "medium":     int(med   or 0),
+            "low":        int(low   or 0),
+            "ai_enhanced": ai_enhanced or 0,
+            "oldest_cve": oldest,
+            "newest_cve": newest,
+            "new_7days":  new7 or 0,
+        }
+        _stats_cache_ts = time.time()
+        print(f"📊 Stats cached: {_stats_cache['total_cves']:,} CVEs, "
+              f"{_stats_cache['critical']} critical, {_stats_cache['high']} high")
+    except Exception as e:
+        print(f"⚠️  Stats cache error: {e}")
+
+@app.route("/stats")
+def stats():
+    global _stats_cache, _stats_cache_ts
+    # Rebuild if empty or older than 5 minutes
+    if not _stats_cache or (time.time() - _stats_cache_ts) > 300:
+        threading.Thread(target=_build_stats_cache, daemon=True).start()
+    if _stats_cache:
+        return jsonify(_stats_cache)
+    # First load — build synchronously so page has data
+    _build_stats_cache()
+    return jsonify(_stats_cache) if _stats_cache else jsonify({"total_cves":0,"critical":0,
+        "high":0,"medium":0,"low":0,"ai_enhanced":0,"oldest_cve":None,"newest_cve":None})
+
+
+@app.route("/api/ai-analyze", methods=["POST"])
+def api_ai_analyze():
+    """Lazy AI endpoint — called by frontend after page renders."""
+    data = request.get_json()
+    if not data or "cves" not in data:
+        return jsonify({"error": "Missing cves list"}), 400
+
+    # Diagnose: log what provider/key is active for THIS request
+    provider, api_key, model = get_ai_config()
+    if not api_key and provider != "ollama":
+        print(f"⚠️ /api/ai-analyze: NO API KEY in session for provider '{provider}'!")
+        print(f"   Session keys present: {list(session.keys())}")
+        print(f"   Hint: Go to /settings and save your API key — it must be set per browser session.")
+    else:
+        print(f"ℹ️  /api/ai-analyze: provider={provider} model={model} key={'set (len=' + str(len(api_key)) + ')' if api_key else 'MISSING'}")
+
+    # Log transparent analytics — provider + model only, NEVER the API key
+    try:
+        ip_hash = hashlib.sha256((request.remote_addr or "").encode()).hexdigest()[:16]
+        conn = sqlite3.connect(DB)
+        conn.execute(
+            "INSERT INTO usage_analytics (event, provider, model, ip_hash) VALUES (?,?,?,?)",
+            ("ai_analyze", provider, model, ip_hash)
+        )
+        conn.commit(); conn.close()
+    except Exception:
+        pass  # analytics failure never breaks the main flow
+
+    results = {}
+    for item in data["cves"][:5]:
+        cve_id = item.get("cve_id", "")
+        if not cve_id:
+            continue
+        try:
+            ai = analyze_cve_with_ai(cve_id, item.get("description", ""))
+            results[cve_id] = {
+                "summary":            ai.get("summary", ""),
+                "affected_companies": ai.get("affected_companies", []),
+                "remediation":        ai.get("remediation", ""),
+                "affected_version":   ai.get("affected_version", "Unknown"),
+                "fixed_version":      ai.get("fixed_version", "Unknown"),
+                "fix_status":         ai.get("fix_status", "Unknown"),
+            }
+        except Exception as e:
+            results[cve_id] = {"error": str(e)}
+    return jsonify(results)
+
+
+@app.route("/keyword-stats")
+def keyword_stats():
+    keywords_param  = request.args.get("keywords", "")
+    severity_filter = request.args.get("severity", "")
+    conn   = get_db_connection()
+    cursor = conn.cursor()
+
+    if keywords_param:
+        keywords   = [k.strip() for k in keywords_param.split(',') if k.strip()]
+        conditions = ["description LIKE ?" for kw in keywords if kw and len(kw) > 1]
+        params     = [f"%{kw}%" for kw in keywords if kw and len(kw) > 1]
+        base_where = "WHERE (" + " OR ".join(conditions) + ")"
+        if severity_filter:
+            if   severity_filter == "Critical": base_where += " AND cvss_score >= 9.0"
+            elif severity_filter == "High":     base_where += " AND cvss_score >= 7.0 AND cvss_score < 9.0"
+            elif severity_filter == "Medium":   base_where += " AND cvss_score >= 4.0 AND cvss_score < 7.0"
+            elif severity_filter == "Low":      base_where += " AND cvss_score > 0 AND cvss_score < 4.0"
+    else:
+        base_where = "WHERE 1=1"
+        params     = []
+
+    try:
+        cursor.execute(f"SELECT COUNT(*) FROM cves {base_where}", params);                    total    = cursor.fetchone()[0]
+        cursor.execute(f"SELECT COUNT(*) FROM cves {base_where} AND cvss_score >= 9.0", params); critical = cursor.fetchone()[0]
+        cursor.execute(f"SELECT COUNT(*) FROM cves {base_where} AND cvss_score >= 7.0 AND cvss_score < 9.0", params); high = cursor.fetchone()[0]
+        cursor.execute(f"SELECT COUNT(*) FROM cves {base_where} AND cvss_score >= 4.0 AND cvss_score < 7.0", params); medium = cursor.fetchone()[0]
+        cursor.execute(f"SELECT COUNT(*) FROM cves {base_where} AND cvss_score > 0 AND cvss_score < 4.0", params); low = cursor.fetchone()[0]
+        conn.close()
+        return jsonify({"total":total,"critical":critical,"high":high,"medium":medium,"low":low,"filtered":bool(keywords_param)})
+    except Exception as e:
+        conn.close()
+        return jsonify({"error":str(e),"total":0,"critical":0,"high":0,"medium":0,"low":0})
+
+
+@app.route("/keyword-counts")
+def keyword_counts():
+    keywords_param  = request.args.get("keywords", "")
+    severity_filter = request.args.get("severity", "")
+    if not keywords_param:
+        return jsonify({})
+    keywords = [k.strip() for k in keywords_param.split(',') if k.strip()]
+    counts   = {}
+    conn     = get_db_connection()
+    cursor   = conn.cursor()
+    for kw in keywords:
+        query  = "SELECT COUNT(*) as count FROM cves WHERE description LIKE ?"
+        params = [f"%{kw}%"]
+        if severity_filter:
+            if   severity_filter == "Critical": query += " AND cvss_score >= 9.0"
+            elif severity_filter == "High":     query += " AND cvss_score >= 7.0 AND cvss_score < 9.0"
+            elif severity_filter == "Medium":   query += " AND cvss_score >= 4.0 AND cvss_score < 7.0"
+            elif severity_filter == "Low":      query += " AND cvss_score > 0 AND cvss_score < 4.0"
+        try:
+            cursor.execute(query, params)
+            result     = cursor.fetchone()
+            counts[kw] = result['count'] if result else 0
+        except Exception as e:
+            counts[kw] = 0
+    conn.close()
+    return jsonify(counts)
+
+
+# ── ADMIN ROUTES ──────────────────────────────────────────────
+
+@app.route("/admin/clear-ai/<cve_id>")
+def clear_ai(cve_id):
+    """Clear stored AI data for a single CVE."""
+    conn = sqlite3.connect(DB)
+    conn.execute("DELETE FROM cve_ai_analysis WHERE cve_id = ?", (cve_id,))
+    conn.execute("DELETE FROM ai_cache WHERE cache_key LIKE ?", (f"%{cve_id}%",))
+    conn.commit(); conn.close()
+    return jsonify({"status":"success","message":f"Cleared AI data for {cve_id}"})
+
+
+@app.route("/admin/regenerate/<cve_id>")
+def regenerate_ai(cve_id):
+    """Force fresh DeepSeek analysis for one CVE."""
+    conn   = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT description FROM cves WHERE cve_id = ?", (cve_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return jsonify({"error": f"{cve_id} not found"}), 404
+    c = sqlite3.connect(DB)
+    c.execute("DELETE FROM cve_ai_analysis WHERE cve_id = ?", (cve_id,))
+    c.execute("DELETE FROM ai_cache WHERE cache_key LIKE ?", (f"%{cve_id}%",))
+    c.commit(); c.close()
+    return jsonify(analyze_cve_with_ai(cve_id, row['description']))
+
+
+@app.route("/admin/clear-all-cache")
+def clear_all_cache():
+    """Clear stale/placeholder AI records only. Valid analysis preserved."""
+    conn   = sqlite3.connect(DB)
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM cve_ai_analysis WHERE summary IN (?, ?, ?, ?)",
+        ("No AI summary available","Information not available",
+         "AI analysis unavailable","AI analysis unavailable — review description manually.")
+    )
+    deleted_analysis = cursor.rowcount
+    cursor.execute("DELETE FROM ai_cache")
+    deleted_cache = cursor.rowcount
+    conn.commit(); conn.close()
+    return jsonify({
+        "status":"success",
+        "deleted_stale_analysis": deleted_analysis,
+        "deleted_cache_entries":  deleted_cache,
+        "message": "Stale AI data cleared. Valid analysis preserved.",
+    })
+
+
+@app.route("/admin/clear-all-ai")
+def clear_all_ai():
+    """
+    WIPE ALL stored AI analysis and cache.
+    Use before sharing the project with others who have a different API key.
+    After wiping, set USE_AI_CACHE=False so their first run generates fresh data.
+    """
+    conn   = sqlite3.connect(DB)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM cve_ai_analysis"); deleted_analysis = cursor.rowcount
+    cursor.execute("DELETE FROM ai_cache");        deleted_cache    = cursor.rowcount
+    conn.commit(); conn.close()
+    return jsonify({
+        "status":           "success",
+        "deleted_analysis": deleted_analysis,
+        "deleted_cache":    deleted_cache,
+        "message":          "ALL AI analysis wiped. Safe to share project now.",
+        "next_steps": [
+            "1. Set USE_AI_CACHE = False in app.py before sharing",
+            "2. Recipient sets their own DEEPSEEK_API_KEY",
+            "3. Recipient sets USE_AI_CACHE = True after first run to enable caching",
+        ],
+    })
+
+
+# ── DEBUG / TEST ──────────────────────────────────────────────
+
+@app.route("/test-ai")
+def test_ai():
+    resp = call_deepseek("Say Hello", max_tokens=10)
+    return f"✅ DeepSeek working: {resp}" if resp else "❌ DeepSeek not working."
+
+
+@app.route("/debug/ai/<cve_id>")
+def debug_ai(cve_id):
+    conn   = sqlite3.connect(DB)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM cve_ai_analysis WHERE cve_id = ?", (cve_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return jsonify({"cve_id":row[0],"summary":row[1],"companies":row[2],
+                        "remediation":row[3],"affected_version":row[4],
+                        "fixed_version":row[5],"fix_status":row[6],"created_at":row[7]})
+    return jsonify({"error":"No AI data found for this CVE"})
+
+
+@app.route("/test-cve/<cve_id>")
+def test_cve(cve_id):
+    conn   = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT description FROM cves WHERE cve_id = ?", (cve_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return f"CVE {cve_id} not found"
+    description = row['description']
+    c = sqlite3.connect(DB)
+    c.execute("DELETE FROM cve_ai_analysis WHERE cve_id = ?", (cve_id,))
+    c.execute("DELETE FROM ai_cache WHERE cache_key LIKE ?", (f"%{cve_id}%",))
+    c.commit(); c.close()
+    result = analyze_cve_with_ai(cve_id, description)
+    return f"""<html><body style="font-family:Arial;margin:20px;background:#f9f9f9">
+    <h2>Test: {cve_id}</h2>
+    <p><b>Fix Status:</b> {result.get('fix_status')}</p>
+    <p><b>Summary:</b> {result.get('summary')}</p>
+    <p><b>Remediation:</b> {result.get('remediation')}</p>
+    <p><b>Affected:</b> {result.get('affected_version')} → Fixed: {result.get('fixed_version')}</p>
+    <p><b>Companies:</b> {', '.join(result.get('affected_companies',[]))}</p>
+    <pre style="background:#1e1e1e;color:#ccc;padding:15px;border-radius:8px;overflow-x:auto">{json.dumps(result,indent=2)}</pre>
+    <hr><pre style="background:#1e1e1e;color:#ccc;padding:15px;border-radius:8px">{description[:800]}...</pre>
+    <p><a href="/">← Back to Dashboard</a></p></body></html>"""
+
+
 # ============================================================
-# ROUTES — SETTINGS
+# AI PROVIDER SETTINGS  (per-user, stored in session)
 # ============================================================
+
+@app.route("/settings", methods=["GET"])
+def settings():
+    from flask import session as fs
+    current_provider = fs.get("ai_provider", DEFAULT_AI_PROVIDER)
+    current_key      = fs.get("ai_api_key", "")
+    current_model    = fs.get("ai_model", "")
+    masked_key = (current_key[:6] + "..." + current_key[-4:]) if len(current_key) > 12 else ("*" * len(current_key))
+
+    providers_json = json.dumps(PROVIDER_INFO)
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <title>AI Provider Settings — CVE Dashboard</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+  <style>
+    body {{ background:#f1f5f9; font-family:'Inter',sans-serif; }}
+    .card {{ border:none; border-radius:14px; box-shadow:0 2px 16px rgba(0,0,0,0.08); }}
+    .provider-card {{ border:2px solid #e2e8f0; border-radius:12px; padding:16px; cursor:pointer;
+                      transition:all 0.2s; background:#fff; }}
+    .provider-card:hover {{ border-color:#3b82f6; box-shadow:0 0 0 3px rgba(59,130,246,0.1); }}
+    .provider-card.selected {{ border-color:#3b82f6; background:#eff6ff; }}
+    .provider-card .name {{ font-weight:700; font-size:0.95rem; }}
+    .free-badge {{ background:#dcfce7; color:#15803d; font-size:0.7rem;
+                   padding:2px 8px; border-radius:10px; font-weight:600; }}
+    .paid-badge {{ background:#fef3c7; color:#92400e; font-size:0.7rem;
+                   padding:2px 8px; border-radius:10px; font-weight:600; }}
+  </style>
+</head>
+<body>
+<div class="container py-5" style="max-width:720px">
+  <div class="d-flex align-items-center gap-3 mb-4">
+    <a href="/" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left"></i></a>
+    <h4 class="mb-0"><i class="bi bi-robot me-2 text-primary"></i>AI Provider Settings</h4>
+  </div>
+
+  <div class="card p-4 mb-4">
+    <h6 class="text-muted mb-3 fw-bold text-uppercase" style="font-size:.75rem;letter-spacing:.5px">
+      Choose Your AI Provider
+    </h6>
+    <div class="row g-3" id="providerGrid">
+      <!-- filled by JS -->
+    </div>
+  </div>
+
+  <div class="card p-4 mb-4" id="keySection">
+    <h6 class="text-muted mb-3 fw-bold text-uppercase" style="font-size:.75rem;letter-spacing:.5px">
+      API Key &amp; Model
+    </h6>
+    <div class="mb-3" id="keyField">
+      <label class="form-label fw-semibold">API Key</label>
+      <div class="input-group">
+        <input type="password" class="form-control" id="apiKeyInput"
+               placeholder="Paste your API key here"
+               value="{masked_key if current_key else ''}">
+        <button class="btn btn-outline-secondary" type="button" onclick="toggleKey()">
+          <i class="bi bi-eye" id="eyeIcon"></i>
+        </button>
+      </div>
+      <div class="form-text" id="keyHint">
+        <a href="#" id="getKeyLink" target="_blank">Get API key →</a>
+      </div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label fw-semibold">Model</label>
+      <select class="form-select" id="modelSelect">
+        <!-- filled by JS -->
+      </select>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button class="btn btn-primary px-4" onclick="saveSettings()">
+      <i class="bi bi-check-lg me-1"></i>Save &amp; Test Connection
+    </button>
+    <button class="btn btn-outline-danger" onclick="clearSettings()">
+      <i class="bi bi-trash me-1"></i>Clear Settings
+    </button>
+  </div>
+
+  <div id="testResult" class="mt-3" style="display:none"></div>
+
+  <div class="mt-4 p-3 rounded" style="background:#f8fafc;border:1px solid #e2e8f0;font-size:.82rem;color:#64748b">
+    <i class="bi bi-shield-lock me-1"></i>
+    API keys are stored only in your browser session and never saved to the server.
+    They are cleared when you close the browser tab.
+  </div>
+</div>
+
+<script>
+const PROVIDERS = {providers_json};
+const currentProvider = "{current_provider}";
+const currentModel    = "{current_model}";
+
+function renderProviders() {{
+  const grid = document.getElementById('providerGrid');
+  grid.innerHTML = '';
+  Object.entries(PROVIDERS).forEach(([id, info]) => {{
+    const selected = id === currentProvider;
+    const badge = info.free_tier
+      ? '<span class="free-badge ms-2">Free tier</span>'
+      : '<span class="paid-badge ms-2">Paid</span>';
+    grid.innerHTML += `
+      <div class="col-6 col-md-3">
+        <div class="provider-card ${{selected ? 'selected' : ''}}" onclick="selectProvider('${{id}}')" id="pcard-${{id}}">
+          <div class="name">${{info.name}} ${{badge}}</div>
+        </div>
+      </div>`;
+  }});
+  updateModelList(currentProvider);
+  updateKeyHint(currentProvider);
+}}
+
+function selectProvider(id) {{
+  document.querySelectorAll('.provider-card').forEach(c => c.classList.remove('selected'));
+  document.getElementById('pcard-' + id).classList.add('selected');
+  const isOllama = id === 'ollama';
+  document.getElementById('keyField').style.opacity = isOllama ? '0.4' : '1';
+  document.getElementById('apiKeyInput').disabled  = isOllama;
+  if (isOllama) document.getElementById('apiKeyInput').placeholder = 'No API key needed for Ollama';
+  else document.getElementById('apiKeyInput').placeholder = PROVIDERS[id]?.placeholder || 'API key';
+  updateModelList(id);
+  updateKeyHint(id);
+}}
+
+function updateModelList(id) {{
+  const sel = document.getElementById('modelSelect');
+  sel.innerHTML = '';
+  (PROVIDERS[id]?.models || []).forEach(m => {{
+    const opt = document.createElement('option');
+    opt.value = m; opt.textContent = m;
+    if (m === currentModel) opt.selected = true;
+    sel.appendChild(opt);
+  }});
+}}
+
+function updateKeyHint(id) {{
+  const link = document.getElementById('getKeyLink');
+  link.href = PROVIDERS[id]?.url || '#';
+  link.textContent = `Get ${{PROVIDERS[id]?.name || ''}} API key →`;
+}}
+
+function getSelectedProvider() {{
+  const sel = document.querySelector('.provider-card.selected');
+  if (!sel) return currentProvider;
+  return sel.id.replace('pcard-', '');
+}}
+
+function toggleKey() {{
+  const inp = document.getElementById('apiKeyInput');
+  const ico = document.getElementById('eyeIcon');
+  if (inp.type === 'password') {{ inp.type = 'text';     ico.className = 'bi bi-eye-slash'; }}
+  else                         {{ inp.type = 'password'; ico.className = 'bi bi-eye'; }}
+}}
+
+async function saveSettings() {{
+  const provider = getSelectedProvider();
+  const api_key  = document.getElementById('apiKeyInput').value.trim();
+  const model    = document.getElementById('modelSelect').value;
+  const btn      = document.querySelector('button.btn-primary');
+  const res      = document.getElementById('testResult');
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Testing...';
+
+  try {{
+    const r = await fetch('/settings/save', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{provider, api_key, model}})
+    }});
+    const d = await r.json();
+    res.style.display = 'block';
+    if (d.ok) {{
+      res.className = 'alert alert-success';
+      res.innerHTML = `<i class="bi bi-check-circle me-2"></i>${{d.message}}`;
+      setTimeout(() => window.location.href = '/', 1500);
+    }} else {{
+      res.className = 'alert alert-danger';
+      res.innerHTML = `<i class="bi bi-x-circle me-2"></i>${{d.message}}`;
+    }}
+  }} catch(e) {{
+    res.style.display = 'block';
+    res.className = 'alert alert-danger';
+    res.innerHTML = 'Connection error — check server is running.';
+  }}
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save &amp; Test Connection';
+}}
+
+async function clearSettings() {{
+  await fetch('/settings/clear', {{method:'POST'}});
+  window.location.reload();
+}}
+
+renderProviders();
+</script>
+</body>
+</html>"""
+
 
 @app.route("/settings/save", methods=["POST"])
 def settings_save():
-    data     = request.get_json(silent=True) or {}
-    provider = data.get("provider", DEFAULT_AI_PROVIDER)
+    from flask import session as fs
+    data     = request.get_json()
+    provider = data.get("provider", "deepseek")
     api_key  = data.get("api_key", "").strip()
     model    = data.get("model", "")
 
-    if provider not in PROVIDER_INFO:
-        return jsonify({"ok": False, "message": "Unknown provider"})
-    if provider != "ollama" and not api_key:
-        return jsonify({"ok": False, "message": "API key required"})
-
-    session["ai_provider"] = provider
-    session["ai_api_key"]  = api_key
-    session["ai_model"]    = model
-    session.permanent      = True
-
-    # Quick connectivity test
-    test_prompt = "Reply with the word PONG only."
-    result      = _call_ai_api(provider, api_key, model or PROVIDER_INFO[provider]["models"][0], test_prompt)
-    if result is None:
-        return jsonify({"ok": False, "message": "Key saved but test call failed — check key/model"})
-    return jsonify({"ok": True, "message": f"Connected to {PROVIDER_INFO[provider]['name']} ✓"})
-
-
-@app.route("/settings", methods=["GET"])
-def settings_page():
-    provider, api_key, model = get_ai_config()
-    return render_template("settings.html",
-                           provider=provider, model=model,
-                           has_key=bool(api_key),
-                           providers=PROVIDER_INFO)
-
-# ============================================================
-# ROUTES — MANUAL DB UPDATE (admin)
-# ============================================================
-
-@app.route("/update-cve", methods=["GET", "POST"])
-def update_cve():
-    """Trigger a manual NVD update. GET shows confirmation page, POST runs it."""
-    if request.method == "GET" and not session.get("admin_logged_in"):
-        csrf = generate_csrf_token()
-        return f"""<!DOCTYPE html>
-<html><head>
-<meta charset="UTF-8">
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body class="bg-light d-flex align-items-center justify-content-center" style="min-height:100vh;">
-<div class="card shadow" style="max-width:480px;width:100%;">
-  <div class="card-body p-4 text-center">
-    <h4 class="mb-3"><i class="bi bi-cloud-arrow-down text-primary"></i> Manual CVE Update</h4>
-    <p class="text-muted mb-4">
-      Fetches CVEs published in the last 24 hours from the NVD API,
-      updates the local database, and sends BOM alert emails if matches are found.
-    </p>
-    <form method="post">
-      <input type="hidden" name="csrf_token" value="{csrf}">
-      <button type="submit" class="btn btn-primary btn-lg px-5">
-        ▶ Run Update Now
-      </button>
-    </form>
-    <p class="text-muted mt-3" style="font-size:.8rem;">
-      Scheduled: automatically runs at 02:00 UTC every day
-    </p>
-    <a href="/" class="btn btn-sm btn-outline-secondary mt-2">← Back to Dashboard</a>
-  </div>
-</div>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-</body></html>"""
-
-    # POST or admin: run update in background thread
-    def _run():
-        fetch_new_cves_from_nvd()
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-
-    # If it's an AJAX / JSON request return JSON; otherwise redirect to dashboard
-    if request.headers.get('Accept','').startswith('application/json') or \
-       request.headers.get('Content-Type','') == 'application/json':
-        return jsonify({"status": "Update started", "started_at": datetime.utcnow().isoformat()})
-
-    return redirect(url_for('index') + '?update=started')
-
-# ============================================================
-# ROUTES — ADMIN
-# ============================================================
-
-@app.route("/admin", methods=["GET", "POST"])
-def admin():
-    login_error = None
-
-    if request.method == "POST":
-        username = request.form.get("username", "")
-        password = request.form.get("password", "")
-        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
-            session["admin_logged_in"] = True
-            session.permanent = True
-        else:
-            login_error = "Invalid username or password"
-
-    if not session.get("admin_logged_in"):
-        return render_template("index.html",
-                               view="admin_login",
-                               login_error=login_error,
-                               csrf_token=generate_csrf_token(),
-                               cves=[], active_keywords=[], keyword=None,
-                               severity_filter="", use_ai=False,
-                               total_pages=1, page=1, env_boms=ENV_BOMS)
-
-    # Gather admin data
-    db_size = os.path.getsize(DB) / (1024 * 1024) if os.path.exists(DB) else 0
+    # Test the connection
+    test_ok  = False
+    message  = ""
     try:
-        conn   = sqlite3.connect(DB)
-        cur    = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM cves")
-        total  = cur.fetchone()[0]
-        cur.execute("SELECT MAX(published) FROM cves")
-        latest = (cur.fetchone()[0] or "N/A")[:10]
-        conn.close()
-    except Exception:
-        total  = 0
-        latest = "N/A"
+        if provider == "ollama":
+            resp = requests.get(OLLAMA_URL.replace("/api/generate", "/api/tags"), timeout=5)
+            test_ok = resp.status_code == 200
+            message = "Ollama is running locally ✓" if test_ok else "Cannot reach Ollama — is it running?"
+        elif provider == "claude":
+            headers = {
+                "x-api-key": api_key, "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            }
+            payload = {
+                "model": model, "max_tokens": 10,
+                "messages": [{"role": "user", "content": "Say OK"}],
+            }
+            resp    = requests.post(CLAUDE_API_URL, json=payload, headers=headers, timeout=15)
+            test_ok = resp.status_code == 200
+            message = f"Claude API connected ✓" if test_ok else f"Claude API error: {resp.status_code}"
+        else:
+            url     = DEEPSEEK_API_URL if provider == "deepseek" else OPENAI_API_URL
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": model, "max_tokens": 10, "temperature": 0.1,
+                "messages": [{"role": "user", "content": "Say OK"}],
+            }
+            resp    = requests.post(url, json=payload, headers=headers, timeout=15)
+            if resp.status_code == 200:
+                # Validate we got actual content back (catches deepseek-reasoner empty content)
+                try:
+                    rj = resp.json()
+                    choices = rj.get("choices", [])
+                    if choices:
+                        msg = choices[0].get("message", {})
+                        content   = (msg.get("content") or "").strip()
+                        reasoning = (msg.get("reasoning_content") or "").strip()
+                        if content:
+                            test_ok = True
+                            message = f"{PROVIDER_INFO.get(provider,{}).get('name',provider)} connected ✓  (model: {model})"
+                        elif reasoning:
+                            # deepseek-reasoner: content empty, reasoning present
+                            # API works but model won't return JSON — warn user
+                            test_ok = False
+                            message = (f"API key is valid but '{model}' only returns reasoning text, not JSON. "
+                                       f"Switch model to 'deepseek-chat' for AI analysis to work.")
+                        else:
+                            test_ok = False
+                            message = (f"API connected but got empty response for model '{model}'.")
+                    elif "error" in rj:
+                        test_ok = False
+                        message = f"API error: {rj['error'].get('message', rj['error'])}"
+                    else:
+                        test_ok = False
+                        message = f"Unexpected response: {str(rj)[:200]}"
+                except Exception as e:
+                    test_ok = False
+                    message = f"Response parse error: {e}"
+            else:
+                test_ok = False
+                try:
+                    err_body = resp.json()
+                    message = f"HTTP {resp.status_code}: {err_body.get('error',{}).get('message', resp.text[:200])}"
+                except Exception:
+                    message = f"HTTP {resp.status_code}: {resp.text[:200]}"
+    except Exception as e:
+        message = f"Connection failed: {e}"
 
-    recent_alerts = []
-    if postgres_pool:
-        try:
-            conn = postgres_pool.getconn()
-            cur  = conn.cursor()
-            cur.execute("""
-                SELECT email, cve_id, bom_name, matched_keyword, sent_at
-                FROM alert_history ORDER BY sent_at DESC LIMIT 20
-            """)
-            recent_alerts = [
-                {"email": r[0], "cve_id": r[1], "bom_name": r[2],
-                 "keyword": r[3],
-                 "sent_at": r[4].strftime("%Y-%m-%d %H:%M") if r[4] else ""}
-                for r in cur.fetchall()
-            ]
-            cur.close()
-            postgres_pool.putconn(conn)
-        except Exception:
-            pass
+    if test_ok:
+        fs["ai_provider"] = provider
+        fs["ai_api_key"]  = api_key
+        fs["ai_model"]    = model
+        return jsonify({"ok": True, "message": f"{message} — Settings saved."})
+    else:
+        return jsonify({"ok": False, "message": message})
 
-    scheduler_next = schedule.next_run().strftime("%Y-%m-%d %H:%M UTC") if schedule.next_run() else "N/A"
 
-    return render_template("index.html",
-                           view="admin",
-                           db_size_mb=f"{db_size:.1f}",
-                           total_cves=total,
-                           latest_cve=latest,
-                           env_boms=ENV_BOMS,
-                           recent_alerts=recent_alerts,
-                           scheduler_next=scheduler_next,
-                           smtp_configured=bool(SMTP_USERNAME and SMTP_PASSWORD),
-                           pg_connected=bool(postgres_pool),
-                           csrf_token=generate_csrf_token(),
-                           cves=[], active_keywords=[], keyword=None,
-                           severity_filter="", use_ai=False,
-                           total_pages=1, page=1)
+@app.route("/settings/clear", methods=["POST"])
+def settings_clear():
+    from flask import session as fs
+    fs.pop("ai_provider", None)
+    fs.pop("ai_api_key",  None)
+    fs.pop("ai_model",    None)
+    return jsonify({"ok": True})
+
+
+# ============================================================
+# ADMIN LOGIN + DB UPDATER
+# ============================================================
+
+def admin_required(f):
+    """Decorator: redirect to /admin/login if not authenticated."""
+    from functools import wraps
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        from flask import session as fs
+        if not fs.get("admin_logged_in"):
+            return redirect(url_for("admin_login", next=request.path))
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    from flask import session as fs
+    error = ""
+    if request.method == "POST":
+        if (request.form.get("username") == ADMIN_USERNAME and
+                request.form.get("password") == ADMIN_PASSWORD):
+            fs["admin_logged_in"] = True
+            return redirect(request.args.get("next") or url_for("admin_panel"))
+        error = "Invalid credentials"
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <title>Admin Login</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <style>
+    body {{ background:#0f172a; display:flex; align-items:center; justify-content:center;
+            min-height:100vh; font-family:'Inter',sans-serif; }}
+    .login-card {{ background:#1e293b; border-radius:16px; padding:40px; width:360px;
+                   box-shadow:0 20px 60px rgba(0,0,0,0.5); }}
+    .form-control {{ background:#0f172a; border-color:#334155; color:#e2e8f0; }}
+    .form-control:focus {{ background:#0f172a; border-color:#3b82f6; color:#e2e8f0; box-shadow:none; }}
+    label {{ color:#94a3b8; font-size:.85rem; }}
+    h5 {{ color:#e2e8f0; }}
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="text-center mb-4">
+      <i class="bi bi-shield-lock-fill text-primary" style="font-size:2.5rem"></i>
+      <h5 class="mt-2">Admin Panel</h5>
+      <p style="color:#64748b;font-size:.82rem">CVE Dashboard</p>
+    </div>
+    {'<div class="alert alert-danger py-2 text-center" style="font-size:.85rem">' + error + '</div>' if error else ''}
+    <form method="POST">
+      <div class="mb-3">
+        <label>Username</label>
+        <input type="text" name="username" class="form-control mt-1" autofocus>
+      </div>
+      <div class="mb-4">
+        <label>Password</label>
+        <input type="password" name="password" class="form-control mt-1">
+      </div>
+      <button type="submit" class="btn btn-primary w-100">Login</button>
+    </form>
+  </div>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+</body>
+</html>"""
 
 
 @app.route("/admin/logout")
 def admin_logout():
-    session.pop("admin_logged_in", None)
-    return redirect(url_for("admin"))
+    from flask import session as fs
+    fs.pop("admin_logged_in", None)
+    return redirect(url_for("index"))
 
 
-@app.route("/admin/trigger-update", methods=["POST"])
-def admin_trigger_update():
-    if not session.get("admin_logged_in"):
-        abort(403)
-    t = threading.Thread(target=fetch_new_cves_from_nvd, daemon=True)
-    t.start()
-    return jsonify({"status": "Update triggered", "time": datetime.utcnow().isoformat()})
-
-
-@app.route("/admin/test-email", methods=["POST"])
-def admin_test_email():
-    if not session.get("admin_logged_in"):
-        abort(403)
-    data  = request.get_json(silent=True) or {}
-    to    = data.get("email", SMTP_USERNAME)
-    ok    = send_email_alert(to, "✅ CVE Dashboard — Test Email",
-                             "<h2>Test email from CVE Monitoring Dashboard</h2>"
-                             "<p>SMTP is configured correctly.</p>")
-    return jsonify({"ok": ok})
-
-
-@app.route("/debug/test-smtp")
-def debug_test_smtp():
-    """
-    Quick SMTP test — no login needed.
-    Sends a test email to SMTP_USERNAME (the configured address).
-    Visit: /debug/test-smtp
-    """
-    if not SMTP_USERNAME or not SMTP_PASSWORD:
-        return jsonify({
-            "ok": False,
-            "error": "SMTP_USERNAME or SMTP_PASSWORD not set",
-            "smtp_server": SMTP_SERVER,
-            "smtp_port": SMTP_PORT,
-            "username_set": bool(SMTP_USERNAME),
-            "password_set": bool(SMTP_PASSWORD),
-        }), 400
-
-    to = request.args.get("to", SMTP_USERNAME)
-    print(f"🔧 Debug SMTP test → sending to {to}")
-
-    ok = send_email_alert(
-        to,
-        "✅ CVE Dashboard — SMTP Test",
-        f"""
-        <h2 style="color:#1a56db;">SMTP Test Successful</h2>
-        <p>This test email was sent from your CVE Monitoring Dashboard.</p>
-        <table style="border-collapse:collapse;width:100%;font-family:monospace;font-size:12px;">
-            <tr><td style="padding:4px 8px;background:#f3f4f6;"><strong>SMTP Server</strong></td>
-                <td style="padding:4px 8px;">{SMTP_SERVER}:{SMTP_PORT}</td></tr>
-            <tr><td style="padding:4px 8px;background:#f3f4f6;"><strong>From</strong></td>
-                <td style="padding:4px 8px;">{ALERT_EMAIL_FROM}</td></tr>
-            <tr><td style="padding:4px 8px;background:#f3f4f6;"><strong>To</strong></td>
-                <td style="padding:4px 8px;">{to}</td></tr>
-            <tr><td style="padding:4px 8px;background:#f3f4f6;"><strong>BOMs loaded</strong></td>
-                <td style="padding:4px 8px;">{len(ENV_BOMS)}</td></tr>
-        </table>
-        """
-    )
-
-    return jsonify({
-        "ok": ok,
-        "sent_to": to,
-        "smtp_server": SMTP_SERVER,
-        "smtp_port": SMTP_PORT,
-        "from": ALERT_EMAIL_FROM,
-        "username": SMTP_USERNAME,
-        "boms_loaded": len(ENV_BOMS),
-        "error": None if ok else "Check Koyeb logs for the exact SMTP error",
-    })
-
-
-@app.route("/debug/test-bom-alert")
-def debug_test_bom_alert():
-    """
-    Sends a real BOM alert email using the most recent CVEs from your DB
-    that match your BOM keywords.
-    Visit: /debug/test-bom-alert
-    """
-    if not ENV_BOMS:
-        return jsonify({"ok": False, "error": "No BOMs configured (check BOM_KEYWORDS_1, BOM_EMAIL_1 env vars)"}), 400
-
-    if not SMTP_USERNAME or not SMTP_PASSWORD:
-        return jsonify({"ok": False, "error": "SMTP not configured"}), 400
-
-    results = []
-
+@app.route("/admin")
+@admin_required
+def admin_panel():
+    conn   = sqlite3.connect(DB)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM cves");            total_cves = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM cve_ai_analysis"); ai_count   = cursor.fetchone()[0]
     try:
+        cursor.execute(f"SELECT MIN({DATE_COLUMN}), MAX({DATE_COLUMN}) FROM cves")
+        dr = cursor.fetchone()
+        oldest, newest = (dr[0] or "?")[:10], (dr[1] or "?")[:10]
+    except Exception:
+        oldest, newest = "?", "?"
+    conn.close()
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <title>Admin Panel — CVE Dashboard</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+  <style>
+    body {{ background:#f1f5f9; font-family:'Inter',sans-serif; }}
+    .card {{ border:none; border-radius:14px; box-shadow:0 2px 16px rgba(0,0,0,0.07); }}
+    .stat-val {{ font-size:1.8rem; font-weight:800; color:#1e293b; }}
+    .action-btn {{ border-radius:10px; font-weight:600; }}
+  </style>
+</head>
+<body>
+<div class="container py-4" style="max-width:760px">
+  <div class="d-flex align-items-center justify-content-between mb-4">
+    <div class="d-flex align-items-center gap-3">
+      <a href="/" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left"></i></a>
+      <h4 class="mb-0"><i class="bi bi-shield-shaded me-2 text-primary"></i>Admin Panel</h4>
+    </div>
+    <a href="/admin/logout" class="btn btn-outline-danger btn-sm">
+      <i class="bi bi-box-arrow-right me-1"></i>Logout
+    </a>
+  </div>
+
+  <!-- Stats -->
+  <div class="row g-3 mb-4">
+    <div class="col-4"><div class="card p-3 text-center">
+      <div class="stat-val">{total_cves:,}</div>
+      <div class="text-muted" style="font-size:.8rem">Total CVEs</div>
+    </div></div>
+    <div class="col-4"><div class="card p-3 text-center">
+      <div class="stat-val">{ai_count:,}</div>
+      <div class="text-muted" style="font-size:.8rem">AI Analyzed</div>
+    </div></div>
+    <div class="col-4"><div class="card p-3 text-center">
+      <div class="stat-val" style="font-size:1rem">{oldest}<br><small class="text-muted" style="font-size:.7rem">to</small><br>{newest}</div>
+      <div class="text-muted" style="font-size:.8rem">Date Range</div>
+    </div></div>
+  </div>
+
+  <!-- Upload DB File -->
+  <div class="card p-4 mb-4">
+    <h5 class="mb-1"><i class="bi bi-file-earmark-arrow-up me-2 text-primary"></i>Upload DB File</h5>
+    <p class="text-muted mb-3" style="font-size:.85rem">
+      Upload a pre-built <code>.db</code> file to merge CVEs into the database.
+      Existing data is backed up first — no data is lost.
+    </p>
+    <label class="btn btn-outline-primary action-btn">
+      <i class="bi bi-upload me-1"></i>Choose .db File
+      <input type="file" id="dbFileInput" accept=".db,.sqlite,.sqlite3" style="display:none"
+             onchange="uploadDb(this)">
+    </label>
+    <div id="uploadProgress" style="display:none;margin-top:12px">
+      <div class="progress mb-2" style="height:7px;border-radius:6px">
+        <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+             id="uploadBar" style="width:30%"></div>
+      </div>
+      <div id="uploadStatus" style="font-size:.82rem;color:#64748b"></div>
+    </div>
+  </div>
+
+  <!-- AI Cache Management -->
+  <div class="card p-4 mb-4">
+    <h5 class="mb-3"><i class="bi bi-robot me-2 text-primary"></i>AI Cache Management</h5>
+    <div class="d-flex gap-2 flex-wrap">
+      <button class="btn btn-outline-warning action-btn"
+              onclick="adminAction('/admin/clear-all-cache','Clear stale/placeholder AI records?')">
+        <i class="bi bi-trash2 me-1"></i>Clear Stale AI
+      </button>
+      <button class="btn btn-outline-danger action-btn"
+              onclick="adminAction('/admin/clear-all-ai','WIPE ALL AI data? This cannot be undone.')">
+        <i class="bi bi-nuclear me-1"></i>Wipe All AI Data
+      </button>
+    </div>
+    <p class="text-muted mt-2 mb-0" style="font-size:.78rem">
+      "Clear Stale" removes placeholder-only records. "Wipe All" clears everything — use before sharing project.
+    </p>
+    <div id="actionResult" class="mt-3" style="display:none"></div>
+  </div>
+
+  <div class="card p-4">
+    <h5 class="mb-2"><i class="bi bi-info-circle me-2 text-muted"></i>Other Actions</h5>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="/update-cve" class="btn btn-success action-btn">
+        <i class="bi bi-cloud-arrow-down me-1"></i>Update CVE Database
+      </a>
+      <a href="/settings" class="btn btn-outline-primary action-btn">
+        <i class="bi bi-gear me-1"></i>AI Provider Settings
+      </a>
+    </div>
+  </div>
+</div>
+
+<script>
+async function uploadDb(input) {{
+  const file = input.files[0];
+  if (!file) return;
+  if (!confirm('Merge this DB file? Existing DB will be backed up first.')) {{ input.value=''; return; }}
+  const prog = document.getElementById('uploadProgress');
+  const stat = document.getElementById('uploadStatus');
+  const bar  = document.getElementById('uploadBar');
+  prog.style.display = 'block';
+  stat.textContent = 'Uploading ' + file.name + '...';
+  const fd = new FormData();
+  fd.append('db_file', file);
+  try {{
+    const r = await fetch('/admin/upload-db', {{method:'POST', body:fd}});
+    const d = await r.json();
+    bar.classList.remove('progress-bar-animated');
+    bar.classList.add(d.ok ? 'bg-success' : 'bg-danger');
+    stat.innerHTML = d.ok
+      ? '<span class="text-success fw-bold">✓ ' + d.message + '</span>'
+      : '<span class="text-danger">✗ ' + d.message + '</span>';
+  }} catch(e) {{
+    stat.innerHTML = '<span class="text-danger">Upload error: ' + e.message + '</span>';
+  }}
+}}
+
+async function adminAction(url, confirmMsg) {{
+  if (!confirm(confirmMsg)) return;
+  const res = document.getElementById('actionResult');
+  res.style.display = 'block';
+  res.className = 'alert alert-info py-2';
+  res.textContent = 'Working...';
+  try {{
+    const r = await fetch(url);
+    const d = await r.json();
+    res.className = 'alert alert-success py-2';
+    res.textContent = d.message || JSON.stringify(d);
+  }} catch(e) {{
+    res.className = 'alert alert-danger py-2';
+    res.textContent = 'Error: ' + e.message;
+  }}
+}}
+</script>
+</body>
+</html>"""
+
+
+@app.route("/admin/update-db", methods=["POST"])
+@admin_required
+def update_db():
+    """
+    Stream CVE updates from NVD for the last DB_UPDATE_DAYS days.
+    Uses NVD API 2.0. Streams JSON progress lines to the browser.
+    """
+    from datetime import datetime, timedelta
+
+    def generate():
+        from datetime import timezone
+
+        now      = datetime.now(timezone.utc)
+        pub_from = (now - timedelta(days=DB_UPDATE_DAYS)).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+        mod_from = (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+        date_to  = now.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+
+        headers = {"User-Agent": "CVE-Dashboard/1.0"}
+        if NVD_API_KEY:
+            headers["apiKey"] = NVD_API_KEY
+
+        results_per  = 2000
+        added = updated = skipped = 0
+
         conn   = sqlite3.connect(DB)
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM cves")
-        total_cves = cursor.fetchone()[0]
-        conn.close()
-    except Exception as e:
-        return jsonify({"ok": False, "error": f"DB error: {e}"}), 500
 
-    if total_cves == 0:
-        return jsonify({"ok": False, "error": "Database is empty — no CVEs to match against"}), 400
-
-    for bom in ENV_BOMS:
-        print(f"🔧 Debug BOM alert test for: {bom['name']} → {bom['email']}")
-        print(f"   Keywords: {bom['keywords']}")
-
-        # Find up to 5 matching CVEs from DB
-        matches = []
+        # Ensure cves table has all needed columns
         try:
-            conn   = sqlite3.connect(DB)
-            cursor = conn.cursor()
-            for keyword in bom['keywords'][:10]:  # check first 10 keywords
-                cursor.execute("""
-                    SELECT cve_id, description, cvss_score, published
-                    FROM cves
-                    WHERE LOWER(description) LIKE ?
-                    ORDER BY published DESC
-                    LIMIT 3
-                """, (f"%{keyword.lower()}%",))
-                rows = cursor.fetchall()
-                for row in rows:
-                    if len(matches) >= 5:
-                        break
-                    cve = {
-                        "cve_id":      row[0],
-                        "description": row[1],
-                        "cvss_score":  row[2],
-                        "severity":    calculate_severity(row[2]),
-                        "published":   row[3],
-                        "companies":   [],
-                    }
-                    # avoid duplicates
-                    if not any(m["cve"]["cve_id"] == cve["cve_id"] for m in matches):
-                        matches.append({"cve": cve, "keyword": keyword})
-                if len(matches) >= 5:
-                    break
-            conn.close()
+            cursor.execute("PRAGMA table_info(cves)")
+            existing_cols = {row[1] for row in cursor.fetchall()}
+            for col in ['cve_id','description','cvss_score','severity','published',
+                        'last_modified','references','cwe_id','affected_versions']:
+                if col not in existing_cols:
+                    col_name = '"references"' if col == 'references' else col
+                    cursor.execute(f"ALTER TABLE cves ADD COLUMN {col_name} TEXT")
+            conn.commit()
         except Exception as e:
-            results.append({"bom": bom['name'], "ok": False, "error": str(e)})
-            continue
+            yield json.dumps({"log": f"Schema check warning: {e}"}) + "\n"
 
-        if not matches:
-            results.append({
-                "bom":     bom['name'],
-                "ok":      False,
-                "error":   f"No CVEs found matching any of your keywords: {bom['keywords']}",
-                "keywords_checked": bom['keywords'],
-            })
-            continue
+        # TWO-PASS: Pass 1 = new CVEs (pubDate), Pass 2 = updated CVEs (lastModDate)
+        fetch_passes = [
+            ("pubStartDate",     "pubEndDate",     pub_from, date_to, "new CVEs"),
+            ("lastModStartDate", "lastModEndDate", mod_from, date_to, "recently modified CVEs"),
+        ]
 
-        # Send the alert
-        print(f"   Found {len(matches)} matching CVEs — sending test alert…")
-        send_bom_alert(bom['email'], f"[TEST] {bom['name']}", bom['keywords'], matches)
-        results.append({
-            "bom":          bom['name'],
-            "ok":           True,
-            "sent_to":      bom['email'],
-            "matches_found": len(matches),
-            "sample_cves":  [m["cve"]["cve_id"] for m in matches],
-            "keyword_used": [m["keyword"] for m in matches],
+        for pass_start_key, pass_end_key, pass_from_dt, pass_to_dt, pass_label in fetch_passes:
+            yield json.dumps({"log": f"Starting pass: {pass_label}…", "progress": 5}) + "\n"
+            start_index   = 0
+            total_results = None
+
+            while True:
+                params = {
+                    pass_start_key:  pass_from_dt,
+                    pass_end_key:    pass_to_dt,
+                    "startIndex":     start_index,
+                    "resultsPerPage": results_per,
+                }
+
+            yield json.dumps({
+                "status":   f"Fetching records {start_index + 1}–{start_index + results_per}...",
+                "progress": min(10 + int((start_index / max(total_results or 1, 1)) * 85), 94),
+            }) + "\n"
+
+            try:
+                resp = requests.get(NVD_API_URL, params=params, headers=headers, timeout=60)
+                if resp.status_code == 403:
+                    yield json.dumps({"done": True, "success": False,
+                                      "status": "NVD API rate limit hit. Add NVD_API_KEY env var for higher limits."}) + "\n"
+                    conn.close(); return
+                if resp.status_code != 200:
+                    yield json.dumps({"done": True, "success": False,
+                                      "status": f"NVD API error: HTTP {resp.status_code}"}) + "\n"
+                    conn.close(); return
+
+                data         = resp.json()
+                total_results = data.get("totalResults", 0)
+                vulnerabilities = data.get("vulnerabilities", [])
+
+                if total_results == 0:
+                    yield json.dumps({"log": "No CVEs found in date range.", "progress": 99}) + "\n"
+                    break
+
+                yield json.dumps({"log": f"→ Total matching CVEs: {total_results:,}  |  Batch: {len(vulnerabilities)}"}) + "\n"
+
+                for item in vulnerabilities:
+                    cve_data = item.get("cve", {})
+                    cve_id   = cve_data.get("id", "")
+                    if not cve_id:
+                        continue
+
+                    # Description
+                    descs = cve_data.get("descriptions", [])
+                    desc  = next((d["value"] for d in descs if d.get("lang") == "en"), "")
+
+                    # CVSS: v4 → v3.1 → v3.0 → v2 fallback
+                    metrics  = cve_data.get("metrics", {})
+                    cvss     = None
+                    severity = None
+                    for key in ["cvssMetricV40","cvssMetricV31","cvssMetricV30","cvssMetricV2"]:
+                        if key in metrics and metrics[key]:
+                            try:
+                                entry    = metrics[key][0]
+                                cvss     = float(entry["cvssData"]["baseScore"])
+                                severity = (entry["cvssData"].get("baseSeverity")
+                                            or entry.get("baseSeverity", ""))
+                            except Exception:
+                                pass
+                            break
+                    if not severity and cvss is not None:
+                        if   cvss >= 9.0: severity = "Critical"
+                        elif cvss >= 7.0: severity = "High"
+                        elif cvss >= 4.0: severity = "Medium"
+                        else:             severity = "Low"
+                    severity = (severity or "Unknown").capitalize()
+
+                    published     = cve_data.get("published", "")[:10]
+                    last_modified = cve_data.get("lastModified", "")[:10]
+
+                    # CWE
+                    weaknesses = cve_data.get("weaknesses", [])
+                    cwe_id = ""
+                    for w in weaknesses:
+                        for d in w.get("description", []):
+                            if d.get("lang") == "en":
+                                cwe_id = d.get("value", "")
+                                break
+                    # References
+                    refs = [r.get("url","") for r in cve_data.get("references", [])[:10]]
+
+                    # CPE version ranges
+                    affected_versions = ""
+                    try:
+                        ver_parts = []
+                        for cfg in cve_data.get("configurations", []):
+                            for node in cfg.get("nodes", []):
+                                for m in node.get("cpeMatch", []):
+                                    if not m.get("vulnerable"): continue
+                                    ve  = m.get("versionEndExcluding", "")
+                                    vei = m.get("versionEndIncluding", "")
+                                    vi  = m.get("versionStartIncluding", "")
+                                    if ve:    ver_parts.append(f"< {ve}")
+                                    elif vei: ver_parts.append(f"<= {vei}")
+                                    elif vi:  ver_parts.append(f">= {vi}")
+                        if ver_parts:
+                            seen, unique = set(), []
+                            for v in ver_parts:
+                                if v not in seen: seen.add(v); unique.append(v)
+                            affected_versions = ", ".join(unique[:5])
+                    except Exception:
+                        pass
+
+                    # Upsert into DB
+                    cursor.execute("SELECT cve_id FROM cves WHERE cve_id = ?", (cve_id,))
+                    exists = cursor.fetchone()
+
+                    if exists:
+                        cursor.execute("""
+                            UPDATE cves SET description=?, cvss_score=?, severity=?,
+                            published=?, last_modified=?, cwe_id=?,
+                            "references"=?, affected_versions=?
+                            WHERE cve_id=?
+                        """, (desc, cvss, severity, published, last_modified, cwe_id,
+                              json.dumps(refs), affected_versions, cve_id))
+                        updated += 1
+                    else:
+                        cursor.execute("""
+                            INSERT INTO cves
+                              (cve_id, description, cvss_score, severity, published,
+                               last_modified, cwe_id, "references", affected_versions)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (cve_id, desc, cvss, severity, published, last_modified,
+                              cwe_id, json.dumps(refs), affected_versions))
+                        added += 1
+
+                conn.commit()
+
+                start_index += results_per
+                if start_index >= total_results:
+                    break
+
+                # NVD rate limit: 5 req/30s without key, 50 req/30s with key
+                time.sleep(0.7 if NVD_API_KEY else 6)
+
+            except Exception as e:
+                yield json.dumps({"log": f"⚠️ Fetch error: {e}", "progress": 50}) + "\n"
+                time.sleep(5)
+                continue
+
+        conn.close()
+        yield json.dumps({
+            "done":    True,
+            "success": True,
+            "progress": 100,
+            "status":  f"Done — {added:,} added, {updated:,} updated, from last {DB_UPDATE_DAYS} days",
+            "log":     f"✅ Added: {added}  Updated: {updated}  Total processed: {added + updated}",
+        }) + "\n"
+
+    return Response(generate(), mimetype="application/x-ndjson")
+
+
+@app.route("/admin/upload-db", methods=["POST"])
+@admin_required
+def upload_db_file():
+    """Upload a .db file to replace/merge into the current database."""
+    if 'db_file' not in request.files:
+        return jsonify({"ok": False, "message": "No file uploaded"})
+
+    file = request.files['db_file']
+    if not file.filename.endswith(('.db', '.sqlite', '.sqlite3')):
+        return jsonify({"ok": False, "message": "Only .db / .sqlite files accepted"})
+
+    try:
+        import shutil
+        # Save uploaded file to temp
+        tmp_path = os.path.join(tempfile.gettempdir(), "uploaded_cve.db")
+        file.save(tmp_path)
+
+        # Verify it's a valid SQLite DB
+        test_conn = sqlite3.connect(tmp_path)
+        test_conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        test_conn.close()
+
+        # Backup current DB
+        backup_path = DB + ".backup"
+        shutil.copy2(DB, backup_path)
+
+        # Merge: copy all CVEs from uploaded DB into current DB
+        src_conn  = sqlite3.connect(tmp_path)
+        src_cur   = src_conn.cursor()
+        dest_conn = sqlite3.connect(DB)
+        dest_cur  = dest_conn.cursor()
+
+        src_cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cves'")
+        if not src_cur.fetchone():
+            src_conn.close(); dest_conn.close()
+            return jsonify({"ok": False, "message": "Uploaded DB has no 'cves' table"})
+
+        src_cur.execute("SELECT * FROM cves")
+        rows       = src_cur.fetchall()
+        src_cur.execute("PRAGMA table_info(cves)")
+        cols       = [c[1] for c in src_cur.fetchall()]
+        src_conn.close()
+
+        placeholders = ",".join(["?" for _ in cols])
+        inserted = 0
+        for row in rows:
+            try:
+                dest_cur.execute(
+                    f"INSERT OR REPLACE INTO cves ({','.join(cols)}) VALUES ({placeholders})",
+                    row
+                )
+                inserted += 1
+            except Exception:
+                pass
+
+        dest_conn.commit(); dest_conn.close()
+        os.remove(tmp_path)
+
+        return jsonify({
+            "ok":      True,
+            "message": f"Merged {inserted:,} CVEs from uploaded file. Backup saved at {backup_path}",
         })
 
-    all_ok = all(r["ok"] for r in results)
-    return jsonify({
-        "ok":          all_ok,
-        "boms_tested": len(results),
-        "results":     results,
-        "db_total_cves": total_cves,
-        "smtp_server": SMTP_SERVER,
-        "smtp_from":   ALERT_EMAIL_FROM,
-    })
-
-# ============================================================
-# ROUTES — BOMS API
-# ============================================================
-
-@app.route("/api/boms", methods=["GET"])
-def get_boms():
-    boms = []
-    for bom in ENV_BOMS:
-        entry = {
-            "id":         f"env_{bom['id']}",
-            "bom_name":   bom['name'],
-            "email":      bom['email'],
-            "keywords":   bom['keywords'],
-            "created_at": None,
-            "source":     "environment",
-            "alerts_last_7_days": 0,
-        }
-        boms.append(entry)
-
-    if postgres_pool:
-        try:
-            conn = postgres_pool.getconn()
-            cur  = conn.cursor()
-            for bom in boms:
-                cur.execute("""
-                    SELECT COUNT(*) FROM alert_history
-                    WHERE email = %s AND sent_at > NOW() - INTERVAL '7 days'
-                """, (bom['email'],))
-                bom['alerts_last_7_days'] = cur.fetchone()[0]
-            cur.close()
-            postgres_pool.putconn(conn)
-        except Exception as e:
-            print(f"⚠️  BOM alert counts error: {e}")
-
-    return jsonify(boms)
-
-
-@app.route("/api/alerts/recent", methods=["GET"])
-def get_recent_alerts():
-    if not postgres_pool:
-        return jsonify([])
-    try:
-        conn = postgres_pool.getconn()
-        cur  = conn.cursor()
-        cur.execute("""
-            SELECT email, cve_id, matched_keyword, bom_name, sent_at
-            FROM alert_history
-            WHERE sent_at > NOW() - INTERVAL '24 hours'
-            ORDER BY sent_at DESC LIMIT 20
-        """)
-        alerts = [
-            {"email": r[0], "cve_id": r[1], "keyword": r[2],
-             "bom_name": r[3], "sent_at": r[4].isoformat() if r[4] else None}
-            for r in cur.fetchall()
-        ]
-        cur.close()
-        postgres_pool.putconn(conn)
-        return jsonify(alerts)
     except Exception as e:
-        print(f"❌ /api/alerts/recent error: {e}")
-        return jsonify([])
+        return jsonify({"ok": False, "message": f"Error: {str(e)}"})
+
 
 # ============================================================
-# ROUTES — NVD MANUAL TRIGGER (lightweight API endpoint)
+# PUBLIC NVD UPDATE  — no admin login, user provides NVD key
 # ============================================================
+
+# ============================================================
+# UPDATE CVE PAGE TEMPLATE  (Jinja2 — no f-string escaping issues)
+# ============================================================
+@app.route("/update-cve", methods=["GET"])
+def update_cve_page():
+    # In production, require admin login to update DB
+    if _IS_PRODUCTION:
+        from flask import session as fs
+        if not fs.get("admin_logged_in"):
+            return redirect(url_for("admin_login", next="/update-cve"))
+    """Public page: user enters NVD API key and fetches CVEs from NVD."""
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(days=DB_UPDATE_DAYS)).strftime("%Y-%m-%d")
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Update CVE Database</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+<style>
+body{background:#0f172a;min-height:100vh;display:flex;align-items:center;
+     justify-content:center;font-family:system-ui,sans-serif;}
+.box{background:#1e293b;border:1px solid #334155;border-radius:16px;
+     padding:36px;width:100%;max-width:560px;box-shadow:0 20px 60px rgba(0,0,0,.5);}
+.form-control{background:#0f172a!important;border-color:#334155!important;color:#e2e8f0!important;}
+.form-control::placeholder{color:#475569!important;}
+#logBox{background:#0f172a;color:#94a3b8;border-radius:8px;padding:12px;
+        font-size:.75rem;max-height:260px;overflow-y:auto;display:none;
+        font-family:monospace;white-space:pre-wrap;word-break:break-all;}
+#progWrap{display:none;}
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="d-flex align-items-center gap-3 mb-3">
+    <a href="/" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+    <h5 class="mb-0 text-white">
+      <i class="bi bi-cloud-download me-2 text-success"></i>Update CVE Database
+    </h5>
+  </div>
+  <p style="color:#94a3b8;font-size:.84rem">
+    Fetches CVEs from the last <b style="color:#fff">""" + str(DB_UPDATE_DAYS) + """ days</b>
+    (from <code style="color:#67e8f9">""" + cutoff + """</code>).
+    Adds/updates only &mdash; never deletes existing data.
+  </p>
+  <div class="mb-3">
+    <label style="color:#94a3b8;font-size:.84rem">
+      NVD API Key <span style="color:#475569">(optional &mdash; free at nvd.nist.gov)</span>
+    </label>
+    <div class="input-group mt-1">
+      <input id="nvdKey" type="password" class="form-control"
+             placeholder="Leave blank to use anonymous rate limit">
+      <button class="btn btn-outline-secondary" type="button"
+              onclick="var f=document.getElementById('nvdKey');
+                       f.type=f.type==='password'?'text':'password';">
+        <i class="bi bi-eye"></i>
+      </button>
+    </div>
+  </div>
+
+  <div id="progWrap" class="mb-2">
+    <div class="progress" style="height:8px;border-radius:6px;background:#0f172a">
+      <div id="progBar" class="progress-bar progress-bar-striped progress-bar-animated bg-success"
+           style="width:0%"></div>
+    </div>
+  </div>
+
+  <div id="statusMsg" style="min-height:20px;font-size:.82rem;color:#94a3b8;margin-bottom:8px"></div>
+  <div id="logBox"></div>
+
+  <button id="fetchBtn" class="btn btn-success w-100 mt-2"
+          onclick="startUpdate()">
+    <i class="bi bi-cloud-arrow-down me-1"></i>
+    Fetch Last """ + str(DB_UPDATE_DAYS) + """ Days from NVD
+  </button>
+</div>
+
+<script>
+var pollTimer = null;
+var lastLogLen = 0;
+
+function startUpdate() {
+  console.log('[NVD] startUpdate() called');
+  var key  = document.getElementById('nvdKey').value.trim();
+  var btn  = document.getElementById('fetchBtn');
+  var prog = document.getElementById('progWrap');
+  var bar  = document.getElementById('progBar');
+  var stat = document.getElementById('statusMsg');
+  var log  = document.getElementById('logBox');
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" style="width:.9rem;height:.9rem"></span>Starting...';
+  prog.style.display = 'block';
+  bar.style.width = '3%';
+  stat.textContent = 'Sending request to server...';
+  log.style.display = 'none';
+  log.textContent = '';
+  lastLogLen = 0;
+
+  console.log('[NVD] POSTing to /api/nvd-update');
+
+  fetch('/api/nvd-update', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({nvd_api_key: key})
+  })
+  .then(function(r) {
+    console.log('[NVD] Got response status:', r.status);
+    return r.json();
+  })
+  .then(function(data) {
+    console.log('[NVD] Response data:', data);
+    if (data.ok) {
+      stat.textContent = 'Update started! Fetching progress...';
+      pollTimer = setInterval(doPoll, 1500);
+    } else {
+      stat.innerHTML = '<span style="color:#f87171">Error: ' + data.message + '</span>';
+      resetBtn();
+    }
+  })
+  .catch(function(err) {
+    console.error('[NVD] fetch error:', err);
+    stat.innerHTML = '<span style="color:#f87171">Request failed: ' + err.message + ' &mdash; check browser console</span>';
+    resetBtn();
+  });
+}
+
+function resetBtn() {
+  var btn = document.getElementById('fetchBtn');
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-cloud-arrow-down me-1"></i>Fetch Last """ + str(DB_UPDATE_DAYS) + """ Days from NVD';
+}
+
+function doPoll() {
+  fetch('/api/nvd-status')
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    var bar  = document.getElementById('progBar');
+    var stat = document.getElementById('statusMsg');
+    var log  = document.getElementById('logBox');
+
+    if (d.progress) bar.style.width = d.progress + '%';
+    if (d.status)   stat.textContent = d.status;
+
+    if (d.log && d.log.length > lastLogLen) {
+      log.style.display = 'block';
+      log.textContent += d.log.slice(lastLogLen).join('\\n') + '\\n';
+      log.scrollTop = log.scrollHeight;
+      lastLogLen = d.log.length;
+    }
+
+    if (d.done) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+      bar.style.width = '100%';
+      bar.classList.remove('progress-bar-animated');
+      if (d.success) {
+        bar.classList.replace('bg-success', 'bg-success');
+        stat.innerHTML = '<span style="color:#4ade80;font-weight:700">&#10003; ' + d.status + '</span>';
+        setTimeout(function() { window.location.href = '/'; }, 3000);
+      } else {
+        bar.classList.replace('bg-success', 'bg-danger');
+        stat.innerHTML = '<span style="color:#f87171;font-weight:700">&#10007; ' + d.status + '</span>';
+        resetBtn();
+      }
+    }
+  })
+  .catch(function(err) {
+    console.warn('[NVD] poll error:', err);
+  });
+}
+</script>
+</body>
+</html>"""
+    resp = Response(html, mimetype="text/html")
+    resp.headers.pop("Content-Security-Policy", None)
+    return resp
+
+
+# NVD update job state
+_nvd_job  = {"running": False, "progress": 0, "status": "idle",
+              "log": [], "success": None, "done": False}
+_nvd_lock = threading.Lock()
+
+
+def _run_nvd_update(user_key):
+    """Background thread: fetch CVEs from NVD and update the local DB."""
+    from datetime import datetime, timedelta, timezone
+    global _nvd_job
+
+    def _log(msg, progress=None):
+        with _nvd_lock:
+            _nvd_job["log"].append(msg)
+            if progress is not None:
+                _nvd_job["progress"] = progress
+            _nvd_job["status"] = msg[:120]
+        print(f"[NVD] {msg}")
+
+    try:
+        now      = datetime.now(timezone.utc)
+        pub_from = (now - timedelta(days=DB_UPDATE_DAYS)).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+        mod_from = (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+        date_to  = now.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+
+        req_headers = {"User-Agent": "CVE-Dashboard/1.0"}
+        if user_key:
+            req_headers["apiKey"] = user_key
+
+        results_per = 2000
+        added = updated = 0
+
+        conn   = sqlite3.connect(DB)
+        cursor = conn.cursor()
+
+        # Ensure schema has all needed columns
+        try:
+            cursor.execute("PRAGMA table_info(cves)")
+            existing = {row[1] for row in cursor.fetchall()}
+            for col in ["cve_id","description","cvss_score","severity",
+                        "published","last_modified","references","cwe_id","affected_versions"]:
+                if col not in existing:
+                    col_sql = '"references"' if col == "references" else col
+                    cursor.execute(f"ALTER TABLE cves ADD COLUMN {col_sql} TEXT")
+            conn.commit()
+        except Exception as ex:
+            _log(f"Schema note: {ex}")
+
+        # ── TWO-PASS FETCH ────────────────────────────────────────────────
+        # Pass 1: New CVEs published in last 180 days
+        # Pass 2: CVEs modified in last 30 days (catches NVD corrections/updates)
+        fetch_passes = [
+            ("pubStartDate",     "pubEndDate",     pub_from, date_to, "new publications"),
+            ("lastModStartDate", "lastModEndDate", mod_from, date_to, "recently modified"),
+        ]
+
+        for pass_start_key, pass_end_key, pass_from, pass_to, pass_label in fetch_passes:
+            _log(f"Pass: {pass_label} ({pass_start_key[:7]}…)", progress=5)
+            start_index   = 0
+            total_results = None
+
+            while True:
+                params = {
+                    pass_start_key:  pass_from,
+                    pass_end_key:    pass_to,
+                    "startIndex":     start_index,
+                    "resultsPerPage": results_per,
+                }
+                prog = min(10 + int((start_index / max(total_results or 1, 1)) * 85), 94)
+                _log(f"Fetching records {start_index + 1}–{start_index + results_per}...", progress=prog)
+
+            try:
+                resp = requests.get(NVD_API_URL, params=params,
+                                    headers=req_headers, timeout=60)
+
+                if resp.status_code == 403:
+                    _log("NVD rate limit — get free API key at nvd.nist.gov")
+                    with _nvd_lock:
+                        _nvd_job.update({"done": True, "success": False,
+                            "status": "Rate limited — add free NVD API key"})
+                    conn.close(); return
+
+                if resp.status_code == 404:
+                    # NVD sometimes returns 404 transiently — retry up to 3 times
+                    _retry_404 = getattr(_run_nvd_update, "_retry_404", 0)
+                    _run_nvd_update._retry_404 = _retry_404 + 1
+                    if _run_nvd_update._retry_404 <= 3:
+                        wait = 30 * _run_nvd_update._retry_404
+                        _log(f"NVD returned 404 (attempt {_run_nvd_update._retry_404}/3) — waiting {wait}s then retrying...")
+                        time.sleep(wait)
+                        continue
+                    _run_nvd_update._retry_404 = 0
+                    _log("NVD API 404 after 3 retries — service may be down, try again in a few minutes")
+                    with _nvd_lock:
+                        _nvd_job.update({"done": True, "success": False,
+                            "status": "NVD API 404 after retries — try again in a few minutes"})
+                    conn.close(); return
+
+                if resp.status_code != 200:
+                    msg = f"NVD HTTP {resp.status_code}: {resp.text[:80]}"
+                    _log(msg)
+                    with _nvd_lock:
+                        _nvd_job.update({"done": True, "success": False, "status": msg})
+                    conn.close(); return
+
+                data_json     = resp.json()
+                total_results = data_json.get("totalResults", 0)
+                vuln_list     = data_json.get("vulnerabilities", [])
+
+                if total_results == 0:
+                    _log(f"No CVEs found for {pass_label}.")
+                    break  # break inner while, continue to next pass
+
+                _log(f"Total: {total_results:,}  |  Batch: {len(vuln_list)}")
+
+                for item in vuln_list:
+                    cve_data = item.get("cve", {})
+                    cve_id   = cve_data.get("id", "")
+                    if not cve_id:
+                        continue
+
+                    descs = cve_data.get("descriptions", [])
+                    desc  = next((d["value"] for d in descs if d.get("lang") == "en"), "")
+
+                    metrics  = cve_data.get("metrics", {})
+                    cvss     = None
+                    severity = None
+                    for mk in ["cvssMetricV40","cvssMetricV31","cvssMetricV30","cvssMetricV2"]:
+                        if mk in metrics and metrics[mk]:
+                            try:
+                                entry    = metrics[mk][0]
+                                cvss     = float(entry["cvssData"]["baseScore"])
+                                severity = (entry["cvssData"].get("baseSeverity")
+                                            or entry.get("baseSeverity", ""))
+                            except Exception:
+                                pass
+                            break
+                    if not severity and cvss is not None:
+                        if   cvss >= 9.0: severity = "Critical"
+                        elif cvss >= 7.0: severity = "High"
+                        elif cvss >= 4.0: severity = "Medium"
+                        else:             severity = "Low"
+                    severity = (severity or "Unknown").capitalize()
+
+                    published     = cve_data.get("published",    "")[:10]
+                    last_modified = cve_data.get("lastModified", "")[:10]
+
+                    cwe_id = ""
+                    for w in cve_data.get("weaknesses", []):
+                        for d in w.get("description", []):
+                            if d.get("lang") == "en":
+                                cwe_id = d.get("value", ""); break
+
+                    refs = [r.get("url", "") for r in cve_data.get("references", [])[:10]]
+
+                    # CPE version ranges
+                    affected_versions = ""
+                    try:
+                        ver_parts = []
+                        for cfg in cve_data.get("configurations", []):
+                            for node in cfg.get("nodes", []):
+                                for m in node.get("cpeMatch", []):
+                                    if not m.get("vulnerable"): continue
+                                    ve  = m.get("versionEndExcluding", "")
+                                    vei = m.get("versionEndIncluding", "")
+                                    vi  = m.get("versionStartIncluding", "")
+                                    if ve:    ver_parts.append(f"< {ve}")
+                                    elif vei: ver_parts.append(f"<= {vei}")
+                                    elif vi:  ver_parts.append(f">= {vi}")
+                        if ver_parts:
+                            seen, unique = set(), []
+                            for v in ver_parts:
+                                if v not in seen: seen.add(v); unique.append(v)
+                            affected_versions = ", ".join(unique[:5])
+                    except Exception:
+                        pass
+
+                    cursor.execute("SELECT cve_id FROM cves WHERE cve_id=?", (cve_id,))
+                    if cursor.fetchone():
+                        cursor.execute("""
+                            UPDATE cves SET description=?,cvss_score=?,severity=?,
+                            published=?,last_modified=?,cwe_id=?,"references"=?,
+                            affected_versions=? WHERE cve_id=?
+                        """, (desc, cvss, severity, published, last_modified,
+                              cwe_id, json.dumps(refs), affected_versions, cve_id))
+                        updated += 1
+                    else:
+                        cursor.execute("""
+                            INSERT INTO cves
+                              (cve_id,description,cvss_score,severity,published,
+                               last_modified,cwe_id,"references",affected_versions)
+                            VALUES (?,?,?,?,?,?,?,?,?)
+                        """, (cve_id, desc, cvss, severity, published, last_modified,
+                              cwe_id, json.dumps(refs), affected_versions))
+                        added += 1
+                conn.commit()
+                start_index += results_per
+                if start_index >= total_results:
+                    break
+                time.sleep(0.7 if user_key else 6)
+
+            except Exception as ex:
+                _log(f"Fetch error: {ex}")
+                time.sleep(5)
+                continue
+
+        conn.close()
+        msg = f"Done — {added:,} added, {updated:,} updated (last {DB_UPDATE_DAYS} days)"
+        _log(f"✅ {msg}", progress=100)
+        with _nvd_lock:
+            _nvd_job.update({"done": True, "success": True, "status": msg,
+                             "running": False})
+
+    except Exception as ex:
+        print(f"[NVD] Fatal: {ex}")
+        with _nvd_lock:
+            _nvd_job.update({"done": True, "success": False,
+                             "status": f"Fatal error: {ex}", "running": False})
+
 
 @app.route("/api/nvd-update", methods=["POST"])
 def api_nvd_update():
-    """Lightweight endpoint for external cron triggers (e.g. Koyeb cron job)."""
-    secret = request.headers.get("X-Update-Secret", "")
-    expected = os.environ.get("UPDATE_SECRET", "")
-    if expected and secret != expected:
-        return jsonify({"error": "Unauthorized"}), 403
-    t = threading.Thread(target=fetch_new_cves_from_nvd, daemon=True)
+    """Start NVD update in background thread, return job ID."""
+    global _nvd_job
+    with _nvd_lock:
+        if _nvd_job.get("running"):
+            return jsonify({"ok": False, "message": "Update already running"}), 409
+
+        body     = request.get_json(silent=True) or {}
+        user_key = (body.get("nvd_api_key") or "").strip() or NVD_API_KEY
+
+        _nvd_job = {"running": True, "progress": 0, "status": "Starting...",
+                    "log": [], "success": None, "done": False}
+
+    t = threading.Thread(target=_run_nvd_update, args=(user_key,), daemon=True)
     t.start()
-    return jsonify({"status": "started", "time": datetime.utcnow().isoformat()})
+    return jsonify({"ok": True, "message": "Update started"})
 
 
 @app.route("/api/nvd-status")
 def api_nvd_status():
-    db_ok    = False
-    db_count = 0
-    db_size_mb = 0
-    db_error = None
+    """Poll endpoint: returns current NVD update job status."""
+    with _nvd_lock:
+        job = dict(_nvd_job)
+        # Only return last 50 log lines to keep response small
+        job["log"] = job["log"][-50:]
+        if job.get("done"):
+            _nvd_job["running"] = False
+    return jsonify(job)
+
+
+@app.route("/admin/analytics")
+@admin_required
+def analytics():
+    """View transparent usage analytics."""
+    conn = sqlite3.connect(DB)
+    cur  = conn.cursor()
+    cur.execute("""
+        SELECT provider, model, COUNT(*) as calls,
+               COUNT(DISTINCT ip_hash) as unique_users,
+               DATE(created_at) as day
+        FROM usage_analytics
+        WHERE event = 'ai_analyze'
+        GROUP BY provider, model, DATE(created_at)
+        ORDER BY day DESC, calls DESC
+        LIMIT 100
+    """)
+    rows = cur.fetchall()
+    cur.execute("SELECT COUNT(*) FROM usage_analytics")
+    total = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(DISTINCT ip_hash) FROM usage_analytics")
+    unique = cur.fetchone()[0]
+    conn.close()
+
+    table_rows = "".join(
+        f"<tr><td>{r[4]}</td><td><b>{r[0]}</b></td><td>{r[1]}</td>"
+        f"<td>{r[2]}</td><td>{r[3]}</td></tr>"
+        for r in rows
+    )
+    return f"""<!DOCTYPE html><html><head>
+    <title>Usage Analytics</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    </head><body class="p-4" style="background:#f1f5f9">
+    <div class="container" style="max-width:900px">
+    <div class="d-flex gap-3 align-items-center mb-4">
+      <a href="/admin" class="btn btn-sm btn-outline-secondary">← Back</a>
+      <h4 class="mb-0">📊 Usage Analytics</h4>
+    </div>
+    <div class="row g-3 mb-4">
+      <div class="col-4"><div class="card p-3 text-center">
+        <div style="font-size:1.8rem;font-weight:800">{total:,}</div>
+        <div class="text-muted" style="font-size:.8rem">Total AI Calls</div>
+      </div></div>
+      <div class="col-4"><div class="card p-3 text-center">
+        <div style="font-size:1.8rem;font-weight:800">{unique:,}</div>
+        <div class="text-muted" style="font-size:.8rem">Unique Users</div>
+      </div></div>
+    </div>
+    <div class="card p-0 overflow-hidden">
+    <table class="table table-sm mb-0">
+      <thead class="table-dark"><tr>
+        <th>Date</th><th>Provider</th><th>Model</th><th>Calls</th><th>Unique IPs</th>
+      </tr></thead>
+      <tbody>{table_rows}</tbody>
+    </table></div>
+    <p class="text-muted mt-3" style="font-size:.78rem">
+      ℹ️ API keys are NEVER stored. Only provider name, model, and hashed IP logged.
+    </p>
+    </div></body></html>"""
+
+@app.route("/webhook/update-db")
+def webhook_update_db():
+    """Public webhook for external cron services (cron-job.org etc).
+    Requires WEBHOOK_SECRET env var to match the 'token' query param.
+    Example: GET /webhook/update-db?token=your-secret
+    """
+    secret = os.environ.get("WEBHOOK_SECRET", "")
+    if not secret:
+        return jsonify({"error": "WEBHOOK_SECRET not configured"}), 500
+    token = request.args.get("token", "")
+    if not token or token != secret:
+        return jsonify({"error": "Invalid token"}), 403
+
+    # Check if update already running
+    with _nvd_lock:
+        if _nvd_job.get("running"):
+            return jsonify({"status": "already_running"}), 200
+
+    # Start background update
+    user_key = os.environ.get("NVD_API_KEY", "")
+    with _nvd_lock:
+        _nvd_job.update({"running": True, "done": False,
+                         "progress": 0, "status": "Starting...",
+                         "log": [], "success": False})
+    threading.Thread(target=_run_nvd_update,
+                     args=(user_key,), daemon=True).start()
+    return jsonify({"status": "started", "message": "NVD update triggered"}), 200
+
+@app.route("/health")
+def health_check():
+    """Render health check endpoint."""
     try:
         conn = sqlite3.connect(DB)
-        cur  = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM cves")
-        db_count = cur.fetchone()[0]
-        cur.close()
+        conn.execute("SELECT COUNT(*) FROM cves")
         conn.close()
-        db_ok      = True
-        db_size_mb = round(os.path.getsize(DB) / (1024*1024), 1) if os.path.exists(DB) else 0
+        return jsonify({"status": "ok", "db": "connected"}), 200
     except Exception as e:
-        db_error = str(e)
+        return jsonify({"status": "error", "detail": str(e)}), 500
 
-    download_url = (
-        f"https://github.com/{GITHUB_REPO}/releases/download/{GITHUB_TAG}/{GITHUB_ASSET}"
-    )
+@app.errorhandler(404)
+def not_found_error(error):  return "Page not found", 404
 
-    return jsonify({
-        "status":       "ok" if db_ok and db_count > 0 else "degraded",
-        "db_ok":        db_ok,
-        "db_path":      DB,
-        "db_size_mb":   db_size_mb,
-        "db_error":     db_error,
-        "cve_count":    db_count,
-        "pg_ok":        bool(postgres_pool),
-        "bom_count":    len(ENV_BOMS),
-        "smtp_ok":      bool(SMTP_USERNAME and SMTP_PASSWORD),
-        "next_run":     schedule.next_run().isoformat() if schedule.next_run() else None,
-        "time_utc":     datetime.utcnow().isoformat(),
-        "github_repo":  GITHUB_REPO,
-        "github_tag":   GITHUB_TAG,
-        "github_asset": GITHUB_ASSET,
-        "download_url": download_url,
-        "last_update":  get_last_update_time().isoformat() if get_last_update_time() else None,
-    })
+@app.errorhandler(500)
+def internal_error(error):   return "Internal server error", 500
+
 
 # ============================================================
 # STARTUP
 # ============================================================
 
-# ── STARTUP SEQUENCE ──────────────────────────────────────────
-# 1. Download DB from GitHub (or verify existing)
-# 2. init_database — ensures ai_cache / cve_ai_analysis tables exist in the real DB
-# 3. Connect PostgreSQL
-download_cve_from_github()
-init_database()
-init_postgres()
-
 if __name__ == "__main__":
-    print("=" * 60)
-    print("🚀  CVE Monitoring Dashboard")
-    print("=" * 60)
-    print(f"📁  SQLite DB  : {DB}")
-    print(f"📦  GitHub     : {GITHUB_REPO} / {GITHUB_TAG}")
-    print(f"🐘  PostgreSQL : {'✅ Connected' if postgres_pool else '❌ Not connected'}")
-    print(f"📧  SMTP       : {SMTP_SERVER}:{SMTP_PORT} user={SMTP_USERNAME or '(not set)'}")
-    print(f"📋  BOMs       : {len(ENV_BOMS)} loaded")
-    print(f"⏰  Scheduler  : daily at 02:00 UTC")
-    print("=" * 60)
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    init_database()
+    ensure_ai_table_columns()
+
+    print("=" * 55)
+    print("🚀 CVE Monitoring Dashboard")
+    print("=" * 55)
+    print(f"📁 Database:  {DB}")
+    print(f"🤖 AI:        {'Enabled' if USE_AI else 'Disabled'}")
+    print(f"🔌 Provider:  {DEFAULT_AI_PROVIDER} (users can change via /settings)")
+    print(f"💾 AI Cache:  {'ON' if USE_AI_CACHE else 'OFF'}")
+    print(f"📅 Date col:  {DATE_COLUMN}")
+    print(f"🔐 Admin:     /admin  (user: {ADMIN_USERNAME})")
+
+    # Clear stale records on startup
+    try:
+        conn   = sqlite3.connect(DB)
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM cve_ai_analysis WHERE summary IN (?, ?, ?, ?)",
+            ("No AI summary available","Information not available",
+             "AI analysis unavailable","AI analysis unavailable — review description manually.")
+        )
+        # Wipe any cached remediation containing generic/NVD-link text so it regenerates
+        cursor.execute(
+            "UPDATE cve_ai_analysis SET remediation = NULL WHERE "
+            "remediation LIKE '%nvd.nist.gov%' OR "
+            "remediation LIKE '%No patch info in CVE description%' OR "
+            "remediation LIKE '%monitor vendor advisories%' OR "
+            "remediation LIKE '%check vendor advisories%'"
+        )
+        cleared = cursor.rowcount
+        conn.commit(); conn.close()
+        if cleared:
+            print(f"🧹 Cleared {cleared} stale AI records")
+    except Exception as e:
+        print(f"⚠️ Stale clear error: {e}")
+
+    try:
+        conn   = sqlite3.connect(DB)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM cves");            cve_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM cve_ai_analysis"); ai_count  = cursor.fetchone()[0]
+        conn.close()
+        print(f"📊 CVEs in DB:  {cve_count:,}")
+        print(f"📊 AI cached:   {ai_count:,}")
+    except Exception as e:
+        print(f"📊 Stats error: {e}")
+
+    print(f"\n🌐  http://127.0.0.1:5000")
+    print(f"⚙️   AI Settings:  http://127.0.0.1:5000/settings")
+    print(f"🔧  Admin Panel:  http://127.0.0.1:5000/admin")
+    print(f"\n   Admin routes:")
+    print(f"   /admin/update-db      → fetch last {DB_UPDATE_DAYS} days from NVD")
+    print(f"   /admin/clear-all-ai   → wipe all AI data (use before sharing)")
+    print(f"   /admin/clear-all-cache→ clear stale AI only")
+    print("=" * 55)
+
+    port  = int(os.environ.get("PORT", 5000))
+    debug = not _IS_PRODUCTION
+    if _IS_PRODUCTION:
+        print("🔒 Production mode — debug disabled, secure cookies enabled")
+    app.run(debug=debug, host="0.0.0.0", port=port)
