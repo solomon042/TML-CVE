@@ -40,6 +40,90 @@ _DEFAULT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "data", "nvd_database.db")
 DB = os.environ.get("CVE_DB_PATH") or _DEFAULT_DB
 
+def _download_db_from_github():
+    """
+    Download nvd_database.db from GitHub Releases if it does not exist locally.
+    Set env vars:
+      GITHUB_REPO  = solomon042/TML-CVE-Dashboard
+      GITHUB_TAG   = v1.0.0  (or latest)
+      GITHUB_ASSET = nvd_database.db
+      GITHUB_TOKEN = (optional, for private repos)
+    """
+    if os.path.exists(DB):
+        size_mb = os.path.getsize(DB) / 1024 / 1024
+        print(f"✅ DB already exists ({size_mb:.0f} MB) — skipping download")
+        return True
+
+    repo  = os.environ.get("GITHUB_REPO",  "")
+    tag   = os.environ.get("GITHUB_TAG",   "v1.0.0")
+    asset = os.environ.get("GITHUB_ASSET", "nvd_database.db")
+    token = os.environ.get("GITHUB_TOKEN", "")
+
+    if not repo:
+        print("⚠️  GITHUB_REPO not set — cannot download DB. Set CVE_DB_PATH or GITHUB_REPO.")
+        return False
+
+    url = f"https://github.com/{repo}/releases/download/{tag}/{asset}"
+    print(f"📥 Downloading CVE DB from GitHub: {url}")
+    print(f"   GITHUB_REPO={repo}  TAG={tag}  ASSET={asset}")
+
+    os.makedirs(os.path.dirname(DB), exist_ok=True)
+
+    headers = {}
+    if token:
+        headers["Authorization"] = f"token {token}"
+
+    for attempt in range(1, 4):
+        try:
+            print(f"   Attempt {attempt}/3…")
+            resp = requests.get(url, headers=headers, stream=True, timeout=300)
+            if resp.status_code == 404:
+                print(f"❌ Release asset not found: {url}")
+                print("   → Upload your DB as a GitHub Release asset first.")
+                return False
+            if resp.status_code != 200:
+                print(f"❌ HTTP {resp.status_code} — retrying…")
+                time.sleep(10)
+                continue
+
+            total = int(resp.headers.get("content-length", 0))
+            downloaded = 0
+            tmp_path = DB + ".tmp"
+
+            with open(tmp_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total:
+                            pct = int(downloaded / total * 100)
+                            if pct % 10 == 0:
+                                print(f"   {pct}% — {downloaded/1024/1024:.1f} MB downloaded")
+
+            os.rename(tmp_path, DB)
+            size_mb = os.path.getsize(DB) / 1024 / 1024
+            print(f"✅ DB ready — {size_mb:.1f} MB")
+
+            # Quick sanity check
+            import sqlite3 as _sq
+            conn = _sq.connect(DB)
+            count = conn.execute("SELECT COUNT(*) FROM cves").fetchone()[0]
+            conn.close()
+            print(f"✅ Validated — {count:,} CVEs in downloaded DB")
+            return True
+
+        except Exception as e:
+            print(f"   Download error: {e}")
+            if os.path.exists(DB + ".tmp"):
+                os.remove(DB + ".tmp")
+            time.sleep(15)
+
+    print("❌ DB download failed after 3 attempts")
+    return False
+
+# Attempt download on startup (only runs if DB missing)
+_download_db_from_github()
+
 app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
