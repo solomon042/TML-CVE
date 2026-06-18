@@ -1192,6 +1192,343 @@ def search_cves_by_keywords(keywords, severity_filter=None, page=1, per_page=50,
     return cves, total
 
 
+
+# ============================================================
+# MULTI-SOURCE VULNERABILITY DATABASES
+# ============================================================
+
+CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+
+
+def fetch_cisa_kev(db_path=None):
+    """Fetch CISA Known Exploited Vulnerabilities — marks CVEs as actively exploited."""
+    db_path = db_path or DB
+    print("📥 Fetching CISA KEV catalog...")
+    try:
+        resp = requests.get(CISA_KEV_URL, timeout=30)
+        if resp.status_code != 200:
+            print(f"⚠️  CISA KEV HTTP {resp.status_code}")
+            return 0, 0
+
+        vulns = resp.json().get("vulnerabilities", [])
+        print(f"   CISA KEV: {len(vulns)} known exploited CVEs")
+
+        conn   = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        for col, typ in [("is_kev","INTEGER DEFAULT 0"),("kev_date_added","TEXT"),
+                         ("kev_ransomware","TEXT"),("source","TEXT DEFAULT 'nvd'")]:
+            try:
+                cursor.execute(f"ALTER TABLE cves ADD COLUMN {col} {typ}")
+            except Exception:
+                pass
+
+        added = updated = 0
+        for v in vulns:
+            cve_id     = v.get("cveID", "")
+            date_added = v.get("dateAdded", "")
+            ransomware = v.get("knownRansomwareCampaignUse", "Unknown")
+            product    = v.get("product", "")
+            vendor     = v.get("vendorProject", "")
+            desc       = v.get("shortDescription", "")
+            due_date   = v.get("dueDate", "")
+            if not cve_id:
+                continue
+
+            cursor.execute("SELECT cve_id FROM cves WHERE cve_id=?", (cve_id,))
+            if cursor.fetchone():
+                cursor.execute("""
+                    UPDATE cves SET is_kev=1, kev_date_added=?, kev_ransomware=?
+                    WHERE cve_id=?
+                """, (date_added, ransomware, cve_id))
+                updated += 1
+            else:
+                full_desc = (f"{vendor} {product}: {desc} "
+                             f"(CISA KEV — patch by {due_date})")
+                cursor.execute("""
+                    INSERT OR IGNORE INTO cves
+                      (cve_id, description, severity, published,
+                       last_modified, is_kev, kev_date_added, kev_ransomware, source)
+                    VALUES (?,?,?,?,?,1,?,?,'kev')
+                """, (cve_id, full_desc, "Unknown", date_added,
+                      date_added, date_added, ransomware))
+                added += 1
+
+        conn.commit()
+        conn.close()
+        print(f"✅ CISA KEV: {added} new CVEs added, {updated} marked as actively exploited")
+        return added, updated
+    except Exception as e:
+        print(f"⚠️  CISA KEV error: {e}")
+        return 0, 0
+
+
+def fetch_github_advisories(db_path=None, days=180):
+    """Fetch GitHub Security Advisories — fills gaps in NVD for software CVEs."""
+    db_path = db_path or DB
+    token   = os.environ.get("GITHUB_TOKEN", "")
+    print("📥 Fetching GitHub Security Advisories...")
+
+    headers = {"Accept": "application/vnd.github+json",
+               "X-GitHub-Api-Version": "2022-11-28"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    else:
+        print("   ℹ️  No GITHUB_TOKEN — using unauthenticated (60 req/hr limit)")
+
+    from datetime import datetime, timedelta
+    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00Z")
+
+    conn   = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    for col, typ in [("source","TEXT"),("affected_versions","TEXT")]:
+        try:
+            cursor.execute(f"ALTER TABLE cves ADD COLUMN {col} {typ}")
+        except Exception:
+            pass
+
+    added = updated = 0
+    page  = 1
+
+    while True:
+        try:
+            resp = requests.get(
+                "https://api.github.com/advisories",
+                headers=headers,
+                params={"per_page": 100, "page": page,
+                        "published": f">{cutoff}", "type": "reviewed"},
+                timeout=30
+            )
+            if resp.status_code == 401:
+                print("⚠️  GitHub token invalid — set GITHUB_TOKEN env var")
+                break
+            if resp.status_code == 403:
+                print("⚠️  GitHub rate limit hit — add GITHUB_TOKEN for 5000 req/hr")
+                break
+            if resp.status_code != 200:
+                print(f"⚠️  GitHub API HTTP {resp.status_code}")
+                break
+
+            advisories = resp.json()
+            if not advisories:
+                break
+
+            for adv in advisories:
+                cve_id = adv.get("cve_id", "") or adv.get("ghsa_id", "")
+                if not cve_id:
+                    continue
+
+                desc       = (adv.get("description") or adv.get("summary") or "")[:2000]
+                severity   = (adv.get("severity") or "unknown").capitalize()
+                cvss_score = None
+                try:
+                    cvss_score = float((adv.get("cvss") or {}).get("score") or 0) or None
+                except Exception:
+                    pass
+                published  = (adv.get("published_at") or "")[:10]
+                updated_at = (adv.get("updated_at")   or "")[:10]
+                affected_v = ""
+                try:
+                    for vuln in (adv.get("vulnerabilities") or []):
+                        vr = vuln.get("vulnerable_version_range","")
+                        if vr:
+                            affected_v = vr[:100]; break
+                except Exception:
+                    pass
+
+                cursor.execute("SELECT cve_id FROM cves WHERE cve_id=?", (cve_id,))
+                if cursor.fetchone():
+                    cursor.execute("""
+                        UPDATE cves SET
+                          affected_versions=COALESCE(NULLIF(affected_versions,''),?)
+                        WHERE cve_id=?
+                    """, (affected_v, cve_id))
+                    updated += 1
+                else:
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO cves
+                          (cve_id,description,cvss_score,severity,published,
+                           last_modified,affected_versions,source)
+                        VALUES (?,?,?,?,?,?,?,'ghsa')
+                    """, (cve_id,desc,cvss_score,severity,published,updated_at,affected_v))
+                    added += 1
+
+            conn.commit()
+            print(f"   GitHub page {page}: {len(advisories)} processed")
+            page += 1
+            time.sleep(1)
+            if len(advisories) < 100:
+                break
+
+        except Exception as e:
+            print(f"⚠️  GitHub Advisory error: {e}")
+            break
+
+    conn.close()
+    print(f"✅ GitHub Advisory: {added} new, {updated} updated")
+    return added, updated
+
+
+
+def fetch_mitre_cve(db_path=None, days=30):
+    """
+    Fetch CVEs directly from MITRE's official CVE API.
+    This catches CVEs in NVD's backlog — published by MITRE but not yet
+    scored/enriched by NVD. No API key required.
+    API: https://cveawg.mitre.org/api/cve
+    """
+    db_path = db_path or DB
+    print("📥 Fetching from MITRE CVE API (fills NVD backlog gaps)...")
+
+    from datetime import datetime, timedelta
+    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00.000Z")
+
+    conn   = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    for col, typ in [("source","TEXT"),("affected_versions","TEXT")]:
+        try:
+            cursor.execute(f"ALTER TABLE cves ADD COLUMN {col} {typ}")
+        except Exception:
+            pass
+
+    added = updated = 0
+    start = 0
+    per   = 500
+
+    while True:
+        try:
+            resp = requests.get(
+                "https://cveawg.mitre.org/api/cve",
+                params={
+                    "state":          "PUBLISHED",
+                    "datePublicFrom": cutoff,
+                    "startIndex":     start,
+                    "resultsPerPage": per,
+                },
+                headers={"User-Agent": "CVE-Dashboard/1.0"},
+                timeout=30
+            )
+
+            if resp.status_code != 200:
+                print(f"⚠️  MITRE API HTTP {resp.status_code}")
+                break
+
+            data  = resp.json()
+            total = data.get("totalResults", 0)
+            cves  = data.get("cves", [])
+
+            if not cves:
+                break
+
+            print(f"   MITRE: {total:,} total | batch {start+1}-{start+len(cves)}")
+
+            for cve in cves:
+                meta    = cve.get("cveMetadata", {})
+                cve_id  = meta.get("cveId", "")
+                if not cve_id:
+                    continue
+
+                published = (meta.get("datePublished") or "")[:10]
+                updated_t = (meta.get("dateUpdated")   or "")[:10]
+
+                # Get English description
+                desc = ""
+                try:
+                    containers = cve.get("containers", {})
+                    cna = containers.get("cna", {})
+                    for d in cna.get("descriptions", []):
+                        if d.get("lang", "").startswith("en"):
+                            desc = d.get("value", "")
+                            break
+                except Exception:
+                    pass
+
+                # Get affected versions from CNA
+                affected_v = ""
+                try:
+                    cna = cve.get("containers", {}).get("cna", {})
+                    for affected in cna.get("affected", []):
+                        for ver in affected.get("versions", []):
+                            v = ver.get("version","")
+                            s = ver.get("status","")
+                            le = ver.get("lessThan","") or ver.get("lessThanOrEqual","")
+                            if s == "affected" and (v or le):
+                                part = f"< {le}" if le else f">= {v}"
+                                affected_v = part; break
+                        if affected_v:
+                            break
+                except Exception:
+                    pass
+
+                # Get CVSS if available in CNA
+                cvss_score = None
+                severity   = "Unknown"
+                try:
+                    cna = cve.get("containers",{}).get("cna",{})
+                    for metric in cna.get("metrics",[]):
+                        for key in ["cvssV4_0","cvssV3_1","cvssV3_0","cvssV2_0"]:
+                            if key in metric:
+                                cvss_score = float(metric[key].get("baseScore",0)) or None
+                                severity   = metric[key].get("baseSeverity","Unknown")
+                                break
+                        if cvss_score:
+                            break
+                except Exception:
+                    pass
+
+                if cvss_score and not severity or severity == "Unknown":
+                    if   cvss_score >= 9.0: severity = "Critical"
+                    elif cvss_score >= 7.0: severity = "High"
+                    elif cvss_score >= 4.0: severity = "Medium"
+                    else:                   severity = "Low"
+
+                # Check if already in DB
+                cursor.execute("SELECT cve_id, cvss_score FROM cves WHERE cve_id=?", (cve_id,))
+                row = cursor.fetchone()
+
+                if row:
+                    # Only update if MITRE has better data than what we have
+                    existing_score = row[1]
+                    if not existing_score and cvss_score:
+                        cursor.execute("""
+                            UPDATE cves SET cvss_score=?, severity=?,
+                            affected_versions=COALESCE(NULLIF(affected_versions,''),?)
+                            WHERE cve_id=?
+                        """, (cvss_score, severity, affected_v, cve_id))
+                        updated += 1
+                    elif not existing_score:
+                        # Update description if empty
+                        cursor.execute("""
+                            UPDATE cves SET
+                            description=COALESCE(NULLIF(description,''),?),
+                            affected_versions=COALESCE(NULLIF(affected_versions,''),?)
+                            WHERE cve_id=?
+                        """, (desc, affected_v, cve_id))
+                        updated += 1
+                else:
+                    # New CVE not in NVD yet — add it
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO cves
+                          (cve_id, description, cvss_score, severity,
+                           published, last_modified, affected_versions, source)
+                        VALUES (?,?,?,?,?,?,?,'mitre')
+                    """, (cve_id, desc[:2000], cvss_score, severity,
+                          published, updated_t, affected_v))
+                    added += 1
+
+            conn.commit()
+            start += len(cves)
+            if start >= total:
+                break
+            time.sleep(1)  # MITRE has no official rate limit but be polite
+
+        except Exception as e:
+            print(f"⚠️  MITRE fetch error: {e}")
+            break
+
+    conn.close()
+    print(f"✅ MITRE CVE API: {added} new CVEs added, {updated} enriched")
+    return added, updated
+
 # ============================================================
 # ROUTES
 # ============================================================
@@ -2135,10 +2472,26 @@ def admin_panel():
     <h5 class="mb-2"><i class="bi bi-info-circle me-2 text-muted"></i>Other Actions</h5>
     <div class="d-flex gap-2 flex-wrap">
       <a href="/update-cve" class="btn btn-success action-btn">
-        <i class="bi bi-cloud-arrow-down me-1"></i>Update CVE Database
+        <i class="bi bi-cloud-arrow-down me-1"></i>Update from NVD
       </a>
+      <button class="btn btn-outline-warning action-btn"
+              onclick="adminAction('/admin/fetch-kev','Fetch CISA KEV (actively exploited CVEs)?')">
+        <i class="bi bi-exclamation-triangle me-1"></i>CISA KEV
+      </button>
+      <button class="btn btn-outline-info action-btn"
+              onclick="adminAction('/admin/fetch-ghsa','Fetch GitHub Security Advisories?')">
+        <i class="bi bi-github me-1"></i>GitHub GHSA
+      </button>
+      <button class="btn btn-outline-purple action-btn" style="border-color:#7c3aed;color:#7c3aed"
+              onclick="adminAction('/admin/fetch-mitre','Fetch from MITRE API (fills NVD backlog)?')">
+        <i class="bi bi-database me-1"></i>MITRE CVE
+      </button>
+      <button class="btn btn-outline-secondary action-btn"
+              onclick="adminAction('/admin/fetch-all-sources','Fetch ALL sources (MITRE+KEV+GHSA)?')">
+        <i class="bi bi-collection me-1"></i>All Sources
+      </button>
       <a href="/settings" class="btn btn-outline-primary action-btn">
-        <i class="bi bi-gear me-1"></i>AI Provider Settings
+        <i class="bi bi-gear me-1"></i>AI Settings
       </a>
     </div>
   </div>
@@ -2222,7 +2575,8 @@ def update_db():
             cursor.execute("PRAGMA table_info(cves)")
             existing_cols = {row[1] for row in cursor.fetchall()}
             for col in ['cve_id','description','cvss_score','severity','published',
-                        'last_modified','references','cwe_id','affected_versions']:
+                        'last_modified','references','cwe_id','affected_versions',
+                        'source','is_kev','kev_date_added','kev_ransomware']:
                 if col not in existing_cols:
                     col_name = '"references"' if col == 'references' else col
                     cursor.execute(f"ALTER TABLE cves ADD COLUMN {col_name} TEXT")
@@ -2259,6 +2613,19 @@ def update_db():
                     if resp.status_code == 403:
                         yield json.dumps({"done": True, "success": False,
                                           "status": "NVD API rate limit. Add NVD_API_KEY env var."}) + "\n"
+                        conn.close(); return
+
+                    if resp.status_code in (503, 429, 500, 502, 504):
+                        _s = getattr(update_db, "_retry_5xx", 0) + 1
+                        update_db._retry_5xx = _s
+                        if _s <= 5:
+                            wait = min(30 * _s, 120)
+                            yield json.dumps({"log": f"NVD HTTP {resp.status_code} — server busy, retrying in {wait}s (attempt {_s}/5)..."}) + "\n"
+                            time.sleep(wait)
+                            continue
+                        update_db._retry_5xx = 0
+                        yield json.dumps({"done": True, "success": False,
+                                          "status": f"NVD server error ({resp.status_code}) — try again later"}) + "\n"
                         conn.close(); return
                     if resp.status_code != 200:
                         yield json.dumps({"done": True, "success": False,
@@ -2670,7 +3037,8 @@ def _run_nvd_update(user_key):
             cursor.execute("PRAGMA table_info(cves)")
             existing = {row[1] for row in cursor.fetchall()}
             for col in ["cve_id","description","cvss_score","severity",
-                        "published","last_modified","references","cwe_id","affected_versions"]:
+                        "published","last_modified","references","cwe_id","affected_versions",
+                        "source","is_kev","kev_date_added","kev_ransomware"]:
                 if col not in existing:
                     col_sql = '"references"' if col == "references" else col
                     cursor.execute(f"ALTER TABLE cves ADD COLUMN {col_sql} TEXT")
@@ -2707,6 +3075,22 @@ def _run_nvd_update(user_key):
                         with _nvd_lock:
                             _nvd_job.update({"done": True, "success": False,
                                 "status": "Rate limited — add NVD API key"})
+                        conn.close(); return
+
+                    if resp.status_code in (503, 429, 500, 502, 504):
+                        _retry_5xx = getattr(_run_nvd_update, "_retry_5xx", 0) + 1
+                        _run_nvd_update._retry_5xx = _retry_5xx
+                        if _retry_5xx <= 5:
+                            wait = min(30 * _retry_5xx, 120)
+                            _log(f"NVD HTTP {resp.status_code} (attempt {_retry_5xx}/5)"
+                                 f" — NVD server busy, retrying in {wait}s...")
+                            time.sleep(wait)
+                            continue
+                        _run_nvd_update._retry_5xx = 0
+                        _log(f"NVD HTTP {resp.status_code} after 5 retries — try again later")
+                        with _nvd_lock:
+                            _nvd_job.update({"done": True, "success": False,
+                                "status": f"NVD server error ({resp.status_code}) — try again later"})
                         conn.close(); return
 
                     if resp.status_code == 404:
@@ -2832,7 +3216,25 @@ def _run_nvd_update(user_key):
                     continue
 
         conn.close()
-        msg = f"Done — {added:,} added, {updated:,} updated"
+
+        # After NVD — fetch CISA KEV and MITRE to fill any gaps
+        _log("Fetching CISA KEV (actively exploited CVEs)...", progress=95)
+        try:
+            kev_added, kev_updated = fetch_cisa_kev()
+            _log(f"CISA KEV: {kev_added} new, {kev_updated} marked exploited")
+        except Exception as e:
+            _log(f"CISA KEV skipped: {e}")
+
+        _log("Fetching MITRE (fills NVD backlog)...", progress=97)
+        try:
+            mitre_added, mitre_updated = fetch_mitre_cve(days=30)
+            _log(f"MITRE: {mitre_added} new, {mitre_updated} enriched")
+        except Exception as e:
+            _log(f"MITRE skipped: {e}")
+
+        _build_stats_cache()
+        msg = (f"Done — NVD: {added:,} added/{updated:,} updated | "
+               f"MITRE+KEV also fetched")
         _log(f"✅ {msg}", progress=100)
         with _nvd_lock:
             _nvd_job.update({"done":True,"success":True,"status":msg,"running":False})
@@ -2961,6 +3363,53 @@ def webhook_update_db():
     threading.Thread(target=_run_nvd_update,
                      args=(user_key,), daemon=True).start()
     return jsonify({"status": "started", "message": "NVD update triggered"}), 200
+
+@app.route("/admin/fetch-kev")
+@admin_required
+def admin_fetch_kev():
+    """Fetch CISA KEV and mark exploited CVEs."""
+    added, updated = fetch_cisa_kev()
+    _build_stats_cache()
+    return jsonify({"ok": True, "added": added, "updated": updated,
+                    "message": f"CISA KEV: {added} new, {updated} marked as exploited"})
+
+
+@app.route("/admin/fetch-ghsa")
+@admin_required
+def admin_fetch_ghsa():
+    """Fetch GitHub Security Advisories."""
+    added, updated = fetch_github_advisories()
+    _build_stats_cache()
+    return jsonify({"ok": True, "added": added, "updated": updated,
+                    "message": f"GitHub GHSA: {added} new, {updated} updated"})
+
+
+@app.route("/admin/fetch-mitre")
+@admin_required
+def admin_fetch_mitre():
+    """Fetch from MITRE CVE API — fills NVD backlog gaps."""
+    added, updated = fetch_mitre_cve(days=90)
+    _build_stats_cache()
+    return jsonify({"ok": True, "added": added, "updated": updated,
+                    "message": f"MITRE API: {added} new CVEs added, {updated} enriched"})
+
+
+@app.route("/admin/fetch-all-sources")
+@admin_required
+def admin_fetch_all_sources():
+    """Fetch from ALL vulnerability sources."""
+    results = {}
+    ka, ku = fetch_cisa_kev()
+    results["cisa_kev"] = {"added": ka, "updated": ku}
+    ma, mu = fetch_mitre_cve(days=90)
+    results["mitre"] = {"added": ma, "updated": mu}
+    ga, gu = fetch_github_advisories()
+    results["github_ghsa"] = {"added": ga, "updated": gu}
+    _build_stats_cache()
+    total_new = ka + ma + ga
+    return jsonify({"ok": True, "results": results,
+                    "message": f"Multi-source: {total_new} new CVEs across NVD+MITRE+KEV+GHSA"})
+
 
 @app.route("/health")
 def health_check():
