@@ -1004,7 +1004,13 @@ def get_db_connection():
     return conn
 
 
-def calculate_severity(score):
+def calculate_severity(score, severity_text=None):
+    """Derive severity from CVSS score, falling back to stored text severity."""
+    # First try the stored severity text (already correct in DB)
+    if severity_text and severity_text.strip().lower() not in ("unknown","","none","null"):
+        s = severity_text.strip().capitalize()
+        if s in ("Critical","High","Medium","Low"):
+            return s
     if score is None:
         return "Unknown"
     try:
@@ -1094,7 +1100,7 @@ def extract_keywords_from_file(filepath, filename):
 
 def _enrich_row(row_dict, use_ai=False):
     """Enrich a CVE row. Never calls DeepSeek — loads from DB cache only."""
-    row_dict["severity"]       = calculate_severity(row_dict.get("cvss_score"))
+    row_dict["severity"]       = calculate_severity(row_dict.get("cvss_score"), row_dict.get("severity"))
     row_dict["published_date"] = row_dict.get(DATE_COLUMN, "N/A")
 
     row_dict.setdefault("ai_summary", None)
@@ -1157,10 +1163,10 @@ def search_cves_by_keywords(keywords, severity_filter=None, page=1, per_page=50,
     query = "SELECT * FROM cves WHERE " + " OR ".join(conditions)
 
     if severity_filter:
-        if   severity_filter == "Critical": query += " AND cvss_score >= 9.0"
-        elif severity_filter == "High":     query += " AND cvss_score >= 7.0 AND cvss_score < 9.0"
-        elif severity_filter == "Medium":   query += " AND cvss_score >= 4.0 AND cvss_score < 7.0"
-        elif severity_filter == "Low":      query += " AND cvss_score > 0 AND cvss_score < 4.0"
+        if   severity_filter == "Critical": query += " AND (cvss_score >= 9.0 OR UPPER(severity) = 'CRITICAL')"
+        elif severity_filter == "High":     query += " AND (cvss_score >= 7.0 AND cvss_score < 9.0 OR UPPER(severity) = 'HIGH')"
+        elif severity_filter == "Medium":   query += " AND (cvss_score >= 4.0 AND cvss_score < 7.0 OR UPPER(severity) = 'MEDIUM')"
+        elif severity_filter == "Low":      query += " AND (cvss_score > 0 AND cvss_score < 4.0 OR UPPER(severity) = 'LOW')"
 
     count_q = query.replace("SELECT *", "SELECT COUNT(*) as count")
     cursor.execute(count_q, params)
@@ -1529,6 +1535,74 @@ def fetch_mitre_cve(db_path=None, days=30):
     print(f"✅ MITRE CVE API: {added} new CVEs added, {updated} enriched")
     return added, updated
 
+
+
+def _upload_db_to_github():
+    """
+    Upload the updated DB back to GitHub Releases so it persists after restart.
+    Requires GITHUB_TOKEN env var with 'repo' scope.
+    """
+    token = os.environ.get("GITHUB_TOKEN", "")
+    repo  = os.environ.get("GITHUB_REPO",  "solomon042/TML-CVE-Dashboard")
+    tag   = os.environ.get("GITHUB_TAG",   "v1.0.0")
+    asset = os.environ.get("GITHUB_ASSET", "nvd_database.db")
+
+    if not token:
+        print("⚠️  GITHUB_TOKEN not set — DB changes will be lost on restart")
+        print("   Add GITHUB_TOKEN to Koyeb env vars to persist DB updates")
+        return False
+
+    print(f"📤 Uploading updated DB back to GitHub Releases ({repo} @ {tag})...")
+
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github+json",
+    }
+
+    # Get the release ID
+    rel_resp = requests.get(
+        f"https://api.github.com/repos/{repo}/releases/tags/{tag}",
+        headers=headers, timeout=15
+    )
+    if rel_resp.status_code != 200:
+        print(f"❌ Could not find release {tag}: HTTP {rel_resp.status_code}")
+        return False
+
+    release_id = rel_resp.json()["id"]
+
+    # Delete the old asset
+    assets_resp = requests.get(
+        f"https://api.github.com/repos/{repo}/releases/{release_id}/assets",
+        headers=headers, timeout=15
+    )
+    for old_asset in assets_resp.json():
+        if old_asset["name"] == asset:
+            requests.delete(
+                f"https://api.github.com/repos/{repo}/releases/assets/{old_asset['id']}",
+                headers=headers, timeout=10
+            )
+            print(f"   Deleted old asset: {old_asset['name']}")
+            break
+
+    # Upload new DB
+    size_mb = os.path.getsize(DB) / 1024 / 1024
+    print(f"   Uploading {size_mb:.0f} MB DB...")
+
+    with open(DB, 'rb') as f:
+        upload_resp = requests.post(
+            f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={asset}",
+            headers={**headers, "Content-Type": "application/octet-stream"},
+            data=f,
+            timeout=600
+        )
+
+    if upload_resp.status_code in (200, 201):
+        print(f"✅ DB uploaded to GitHub Releases — will persist after restart")
+        return True
+    else:
+        print(f"❌ Upload failed: HTTP {upload_resp.status_code}")
+        return False
+
 # ============================================================
 # ROUTES
 # ============================================================
@@ -1717,10 +1791,22 @@ def _build_stats_cache():
         cursor.execute("""
             SELECT
                 COUNT(*),
-                SUM(CASE WHEN cvss_score >= 9.0 THEN 1 ELSE 0 END),
-                SUM(CASE WHEN cvss_score >= 7.0 AND cvss_score < 9.0 THEN 1 ELSE 0 END),
-                SUM(CASE WHEN cvss_score >= 4.0 AND cvss_score < 7.0 THEN 1 ELSE 0 END),
-                SUM(CASE WHEN cvss_score > 0   AND cvss_score < 4.0 THEN 1 ELSE 0 END),
+                SUM(CASE
+                    WHEN cvss_score >= 9.0 THEN 1
+                    WHEN UPPER(severity) = 'CRITICAL' THEN 1
+                    ELSE 0 END),
+                SUM(CASE
+                    WHEN cvss_score >= 7.0 AND cvss_score < 9.0 THEN 1
+                    WHEN UPPER(severity) = 'HIGH' AND (cvss_score IS NULL OR cvss_score = 0) THEN 1
+                    ELSE 0 END),
+                SUM(CASE
+                    WHEN cvss_score >= 4.0 AND cvss_score < 7.0 THEN 1
+                    WHEN UPPER(severity) = 'MEDIUM' AND (cvss_score IS NULL OR cvss_score = 0) THEN 1
+                    ELSE 0 END),
+                SUM(CASE
+                    WHEN cvss_score > 0 AND cvss_score < 4.0 THEN 1
+                    WHEN UPPER(severity) = 'LOW' AND (cvss_score IS NULL OR cvss_score = 0) THEN 1
+                    ELSE 0 END),
                 MIN(published), MAX(published)
             FROM cves
         """)
@@ -1858,10 +1944,10 @@ def keyword_counts():
         query  = "SELECT COUNT(*) as count FROM cves WHERE description LIKE ?"
         params = [f"%{kw}%"]
         if severity_filter:
-            if   severity_filter == "Critical": query += " AND cvss_score >= 9.0"
-            elif severity_filter == "High":     query += " AND cvss_score >= 7.0 AND cvss_score < 9.0"
-            elif severity_filter == "Medium":   query += " AND cvss_score >= 4.0 AND cvss_score < 7.0"
-            elif severity_filter == "Low":      query += " AND cvss_score > 0 AND cvss_score < 4.0"
+            if   severity_filter == "Critical": query += " AND (cvss_score >= 9.0 OR UPPER(severity) = 'CRITICAL')"
+            elif severity_filter == "High":     query += " AND (cvss_score >= 7.0 AND cvss_score < 9.0 OR UPPER(severity) = 'HIGH')"
+            elif severity_filter == "Medium":   query += " AND (cvss_score >= 4.0 AND cvss_score < 7.0 OR UPPER(severity) = 'MEDIUM')"
+            elif severity_filter == "Low":      query += " AND (cvss_score > 0 AND cvss_score < 4.0 OR UPPER(severity) = 'LOW')"
         try:
             cursor.execute(query, params)
             result     = cursor.fetchone()
@@ -2489,6 +2575,10 @@ def admin_panel():
       <button class="btn btn-outline-secondary action-btn"
               onclick="adminAction('/admin/fetch-all-sources','Fetch ALL sources (MITRE+KEV+GHSA)?')">
         <i class="bi bi-collection me-1"></i>All Sources
+      </button>
+      <button class="btn btn-outline-danger action-btn"
+              onclick="adminAction('/admin/save-db-to-github','Save updated DB to GitHub Releases? (requires GITHUB_TOKEN)')">
+        <i class="bi bi-cloud-upload me-1"></i>Save DB to GitHub
       </button>
       <a href="/settings" class="btn btn-outline-primary action-btn">
         <i class="bi bi-gear me-1"></i>AI Settings
@@ -3394,6 +3484,18 @@ def admin_fetch_mitre():
                     "message": f"MITRE API: {added} new CVEs added, {updated} enriched"})
 
 
+@app.route("/admin/save-db-to-github")
+@admin_required
+def admin_save_db():
+    """Upload current DB to GitHub Releases so it persists after restart."""
+    ok = _upload_db_to_github()
+    if ok:
+        return jsonify({"ok": True,
+                        "message": "✅ DB saved to GitHub Releases — changes will survive restart"})
+    return jsonify({"ok": False,
+                    "message": "❌ Failed — add GITHUB_TOKEN env var in Koyeb with repo scope"})
+
+
 @app.route("/admin/fetch-all-sources")
 @admin_required
 def admin_fetch_all_sources():
@@ -3406,9 +3508,12 @@ def admin_fetch_all_sources():
     ga, gu = fetch_github_advisories()
     results["github_ghsa"] = {"added": ga, "updated": gu}
     _build_stats_cache()
+    # Auto-save to GitHub so changes persist after Koyeb restart
+    saved = _upload_db_to_github()
     total_new = ka + ma + ga
+    save_msg  = " DB saved to GitHub ✅" if saved else " (add GITHUB_TOKEN to persist DB)"
     return jsonify({"ok": True, "results": results,
-                    "message": f"Multi-source: {total_new} new CVEs across NVD+MITRE+KEV+GHSA"})
+                    "message": f"Multi-source: {total_new} new CVEs.{save_msg}"})
 
 
 @app.route("/health")
