@@ -2249,135 +2249,123 @@ def update_db():
                     "resultsPerPage": results_per,
                 }
 
-            yield json.dumps({
-                "status":   f"Fetching records {start_index + 1}–{start_index + results_per}...",
-                "progress": min(10 + int((start_index / max(total_results or 1, 1)) * 85), 94),
-            }) + "\n"
+                yield json.dumps({
+                    "status":   f"Fetching records {start_index + 1}\u20132000...",
+                    "progress": min(10 + int((start_index / max(total_results or 1, 1)) * 85), 94),
+                }) + "\n"
 
-            try:
-                resp = requests.get(NVD_API_URL, params=params, headers=headers, timeout=60)
-                if resp.status_code == 403:
-                    yield json.dumps({"done": True, "success": False,
-                                      "status": "NVD API rate limit hit. Add NVD_API_KEY env var for higher limits."}) + "\n"
-                    conn.close(); return
-                if resp.status_code != 200:
-                    yield json.dumps({"done": True, "success": False,
-                                      "status": f"NVD API error: HTTP {resp.status_code}"}) + "\n"
-                    conn.close(); return
+                try:
+                    resp = requests.get(NVD_API_URL, params=params, headers=headers, timeout=60)
+                    if resp.status_code == 403:
+                        yield json.dumps({"done": True, "success": False,
+                                          "status": "NVD API rate limit. Add NVD_API_KEY env var."}) + "\n"
+                        conn.close(); return
+                    if resp.status_code != 200:
+                        yield json.dumps({"done": True, "success": False,
+                                          "status": f"NVD API error: HTTP {resp.status_code}"}) + "\n"
+                        conn.close(); return
 
-                data         = resp.json()
-                total_results = data.get("totalResults", 0)
-                vulnerabilities = data.get("vulnerabilities", [])
+                    data          = resp.json()
+                    total_results = data.get("totalResults", 0)
+                    vulnerabilities = data.get("vulnerabilities", [])
 
-                if total_results == 0:
-                    yield json.dumps({"log": "No CVEs found in date range.", "progress": 99}) + "\n"
-                    break
+                    if total_results == 0:
+                        yield json.dumps({"log": f"No CVEs found for {pass_label}.", "progress": 99}) + "\n"
+                        break
 
-                yield json.dumps({"log": f"→ Total matching CVEs: {total_results:,}  |  Batch: {len(vulnerabilities)}"}) + "\n"
+                    yield json.dumps({"log": f"Total: {total_results:,} | Batch: {len(vulnerabilities)}"}) + "\n"
 
-                for item in vulnerabilities:
-                    cve_data = item.get("cve", {})
-                    cve_id   = cve_data.get("id", "")
-                    if not cve_id:
-                        continue
+                    for item in vulnerabilities:
+                        cve_data = item.get("cve", {})
+                        cve_id   = cve_data.get("id", "")
+                        if not cve_id:
+                            continue
 
-                    # Description
-                    descs = cve_data.get("descriptions", [])
-                    desc  = next((d["value"] for d in descs if d.get("lang") == "en"), "")
+                        descs = cve_data.get("descriptions", [])
+                        desc  = next((d["value"] for d in descs if d.get("lang") == "en"), "")
 
-                    # CVSS: v4 → v3.1 → v3.0 → v2 fallback
-                    metrics  = cve_data.get("metrics", {})
-                    cvss     = None
-                    severity = None
-                    for key in ["cvssMetricV40","cvssMetricV31","cvssMetricV30","cvssMetricV2"]:
-                        if key in metrics and metrics[key]:
-                            try:
-                                entry    = metrics[key][0]
-                                cvss     = float(entry["cvssData"]["baseScore"])
-                                severity = (entry["cvssData"].get("baseSeverity")
-                                            or entry.get("baseSeverity", ""))
-                            except Exception:
-                                pass
-                            break
-                    if not severity and cvss is not None:
-                        if   cvss >= 9.0: severity = "Critical"
-                        elif cvss >= 7.0: severity = "High"
-                        elif cvss >= 4.0: severity = "Medium"
-                        else:             severity = "Low"
-                    severity = (severity or "Unknown").capitalize()
-
-                    published     = cve_data.get("published", "")[:10]
-                    last_modified = cve_data.get("lastModified", "")[:10]
-
-                    # CWE
-                    weaknesses = cve_data.get("weaknesses", [])
-                    cwe_id = ""
-                    for w in weaknesses:
-                        for d in w.get("description", []):
-                            if d.get("lang") == "en":
-                                cwe_id = d.get("value", "")
+                        metrics  = cve_data.get("metrics", {})
+                        cvss     = None
+                        severity = None
+                        for key in ["cvssMetricV40","cvssMetricV31","cvssMetricV30","cvssMetricV2"]:
+                            if key in metrics and metrics[key]:
+                                try:
+                                    entry    = metrics[key][0]
+                                    cvss     = float(entry["cvssData"]["baseScore"])
+                                    severity = (entry["cvssData"].get("baseSeverity")
+                                                or entry.get("baseSeverity", ""))
+                                except Exception:
+                                    pass
                                 break
-                    # References
-                    refs = [r.get("url","") for r in cve_data.get("references", [])[:10]]
+                        if not severity and cvss is not None:
+                            if   cvss >= 9.0: severity = "Critical"
+                            elif cvss >= 7.0: severity = "High"
+                            elif cvss >= 4.0: severity = "Medium"
+                            else:             severity = "Low"
+                        severity = (severity or "Unknown").capitalize()
 
-                    # CPE version ranges
-                    affected_versions = ""
-                    try:
-                        ver_parts = []
-                        for cfg in cve_data.get("configurations", []):
-                            for node in cfg.get("nodes", []):
-                                for m in node.get("cpeMatch", []):
-                                    if not m.get("vulnerable"): continue
-                                    ve  = m.get("versionEndExcluding", "")
-                                    vei = m.get("versionEndIncluding", "")
-                                    vi  = m.get("versionStartIncluding", "")
-                                    if ve:    ver_parts.append(f"< {ve}")
-                                    elif vei: ver_parts.append(f"<= {vei}")
-                                    elif vi:  ver_parts.append(f">= {vi}")
-                        if ver_parts:
-                            seen, unique = set(), []
-                            for v in ver_parts:
-                                if v not in seen: seen.add(v); unique.append(v)
-                            affected_versions = ", ".join(unique[:5])
-                    except Exception:
-                        pass
+                        published     = cve_data.get("published", "")[:10]
+                        last_modified = cve_data.get("lastModified", "")[:10]
 
-                    # Upsert into DB
-                    cursor.execute("SELECT cve_id FROM cves WHERE cve_id = ?", (cve_id,))
-                    exists = cursor.fetchone()
+                        cwe_id = ""
+                        for w in cve_data.get("weaknesses", []):
+                            for d in w.get("description", []):
+                                if d.get("lang") == "en":
+                                    cwe_id = d.get("value", ""); break
 
-                    if exists:
-                        cursor.execute("""
-                            UPDATE cves SET description=?, cvss_score=?, severity=?,
-                            published=?, last_modified=?, cwe_id=?,
-                            "references"=?, affected_versions=?
-                            WHERE cve_id=?
-                        """, (desc, cvss, severity, published, last_modified, cwe_id,
-                              json.dumps(refs), affected_versions, cve_id))
-                        updated += 1
-                    else:
-                        cursor.execute("""
-                            INSERT INTO cves
-                              (cve_id, description, cvss_score, severity, published,
-                               last_modified, cwe_id, "references", affected_versions)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (cve_id, desc, cvss, severity, published, last_modified,
-                              cwe_id, json.dumps(refs), affected_versions))
-                        added += 1
+                        refs = [r.get("url","") for r in cve_data.get("references", [])[:10]]
 
-                conn.commit()
+                        affected_versions = ""
+                        try:
+                            ver_parts = []
+                            for cfg in cve_data.get("configurations", []):
+                                for node in cfg.get("nodes", []):
+                                    for m in node.get("cpeMatch", []):
+                                        if not m.get("vulnerable"): continue
+                                        ve  = m.get("versionEndExcluding", "")
+                                        vei = m.get("versionEndIncluding", "")
+                                        vi  = m.get("versionStartIncluding", "")
+                                        if ve:    ver_parts.append(f"< {ve}")
+                                        elif vei: ver_parts.append(f"<= {vei}")
+                                        elif vi:  ver_parts.append(f">= {vi}")
+                            if ver_parts:
+                                seen, unique = set(), []
+                                for v in ver_parts:
+                                    if v not in seen: seen.add(v); unique.append(v)
+                                affected_versions = ", ".join(unique[:5])
+                        except Exception:
+                            pass
 
-                start_index += results_per
-                if start_index >= total_results:
-                    break
+                        cursor.execute("SELECT cve_id FROM cves WHERE cve_id = ?", (cve_id,))
+                        if cursor.fetchone():
+                            cursor.execute("""
+                                UPDATE cves SET description=?, cvss_score=?, severity=?,
+                                published=?, last_modified=?, cwe_id=?,
+                                "references"=?, affected_versions=? WHERE cve_id=?
+                            """, (desc, cvss, severity, published, last_modified, cwe_id,
+                                  json.dumps(refs), affected_versions, cve_id))
+                            updated += 1
+                        else:
+                            cursor.execute("""
+                                INSERT INTO cves
+                                  (cve_id, description, cvss_score, severity, published,
+                                   last_modified, cwe_id, "references", affected_versions)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (cve_id, desc, cvss, severity, published, last_modified,
+                                  cwe_id, json.dumps(refs), affected_versions))
+                            added += 1
 
-                # NVD rate limit: 5 req/30s without key, 50 req/30s with key
-                time.sleep(0.7 if NVD_API_KEY else 6)
+                    conn.commit()
+                    start_index += results_per
+                    if start_index >= total_results:
+                        break
+                    time.sleep(0.7 if NVD_API_KEY else 6)
 
-            except Exception as e:
-                yield json.dumps({"log": f"⚠️ Fetch error: {e}", "progress": 50}) + "\n"
-                time.sleep(5)
-                continue
+                except Exception as e:
+                    yield json.dumps({"log": f"Fetch error: {e}", "progress": 50}) + "\n"
+                    time.sleep(5)
+                    continue
+
 
         conn.close()
         yield json.dumps({
@@ -2678,7 +2666,6 @@ def _run_nvd_update(user_key):
         conn   = sqlite3.connect(DB)
         cursor = conn.cursor()
 
-        # Ensure schema has all needed columns
         try:
             cursor.execute("PRAGMA table_info(cves)")
             existing = {row[1] for row in cursor.fetchall()}
@@ -2691,16 +2678,13 @@ def _run_nvd_update(user_key):
         except Exception as ex:
             _log(f"Schema note: {ex}")
 
-        # ── TWO-PASS FETCH ────────────────────────────────────────────────
-        # Pass 1: New CVEs published in last 180 days
-        # Pass 2: CVEs modified in last 30 days (catches NVD corrections/updates)
         fetch_passes = [
             ("pubStartDate",     "pubEndDate",     pub_from, date_to, "new publications"),
             ("lastModStartDate", "lastModEndDate", mod_from, date_to, "recently modified"),
         ]
 
         for pass_start_key, pass_end_key, pass_from, pass_to, pass_label in fetch_passes:
-            _log(f"Pass: {pass_label} ({pass_start_key[:7]}…)", progress=5)
+            _log(f"Pass: {pass_label}", progress=5)
             start_index   = 0
             total_results = None
 
@@ -2712,155 +2696,152 @@ def _run_nvd_update(user_key):
                     "resultsPerPage": results_per,
                 }
                 prog = min(10 + int((start_index / max(total_results or 1, 1)) * 85), 94)
-                _log(f"Fetching records {start_index + 1}–{start_index + results_per}...", progress=prog)
+                _log(f"Fetching records {start_index+1}-{start_index+results_per}...", progress=prog)
 
-            try:
-                resp = requests.get(NVD_API_URL, params=params,
-                                    headers=req_headers, timeout=60)
+                try:
+                    resp = requests.get(NVD_API_URL, params=params,
+                                        headers=req_headers, timeout=60)
 
-                if resp.status_code == 403:
-                    _log("NVD rate limit — get free API key at nvd.nist.gov")
-                    with _nvd_lock:
-                        _nvd_job.update({"done": True, "success": False,
-                            "status": "Rate limited — add free NVD API key"})
-                    conn.close(); return
+                    if resp.status_code == 403:
+                        _log("NVD rate limit — add free NVD API key")
+                        with _nvd_lock:
+                            _nvd_job.update({"done": True, "success": False,
+                                "status": "Rate limited — add NVD API key"})
+                        conn.close(); return
 
-                if resp.status_code == 404:
-                    # NVD sometimes returns 404 transiently — retry up to 3 times
-                    _retry_404 = getattr(_run_nvd_update, "_retry_404", 0)
-                    _run_nvd_update._retry_404 = _retry_404 + 1
-                    if _run_nvd_update._retry_404 <= 3:
-                        wait = 30 * _run_nvd_update._retry_404
-                        _log(f"NVD returned 404 (attempt {_run_nvd_update._retry_404}/3) — waiting {wait}s then retrying...")
-                        time.sleep(wait)
-                        continue
-                    _run_nvd_update._retry_404 = 0
-                    _log("NVD API 404 after 3 retries — service may be down, try again in a few minutes")
-                    with _nvd_lock:
-                        _nvd_job.update({"done": True, "success": False,
-                            "status": "NVD API 404 after retries — try again in a few minutes"})
-                    conn.close(); return
+                    if resp.status_code == 404:
+                        _retry = getattr(_run_nvd_update, "_retry_404", 0) + 1
+                        _run_nvd_update._retry_404 = _retry
+                        if _retry <= 3:
+                            wait = 30 * _retry
+                            _log(f"NVD 404 (attempt {_retry}/3) — retrying in {wait}s...")
+                            time.sleep(wait)
+                            continue
+                        _run_nvd_update._retry_404 = 0
+                        _log("NVD 404 after 3 retries — try again later")
+                        with _nvd_lock:
+                            _nvd_job.update({"done": True, "success": False,
+                                "status": "NVD 404 after retries — try again later"})
+                        conn.close(); return
 
-                if resp.status_code != 200:
-                    msg = f"NVD HTTP {resp.status_code}: {resp.text[:80]}"
-                    _log(msg)
-                    with _nvd_lock:
-                        _nvd_job.update({"done": True, "success": False, "status": msg})
-                    conn.close(); return
+                    if resp.status_code != 200:
+                        msg = f"NVD HTTP {resp.status_code}"
+                        _log(msg)
+                        with _nvd_lock:
+                            _nvd_job.update({"done": True, "success": False, "status": msg})
+                        conn.close(); return
 
-                data_json     = resp.json()
-                total_results = data_json.get("totalResults", 0)
-                vuln_list     = data_json.get("vulnerabilities", [])
+                    data_json     = resp.json()
+                    total_results = data_json.get("totalResults", 0)
+                    vuln_list     = data_json.get("vulnerabilities", [])
 
-                if total_results == 0:
-                    _log(f"No CVEs found for {pass_label}.")
-                    break  # break inner while, continue to next pass
+                    if total_results == 0:
+                        _log(f"No CVEs for {pass_label}.")
+                        break
 
-                _log(f"Total: {total_results:,}  |  Batch: {len(vuln_list)}")
+                    _log(f"Total: {total_results:,} | Batch: {len(vuln_list)}")
 
-                for item in vuln_list:
-                    cve_data = item.get("cve", {})
-                    cve_id   = cve_data.get("id", "")
-                    if not cve_id:
-                        continue
+                    for item in vuln_list:
+                        cve_data = item.get("cve", {})
+                        cve_id   = cve_data.get("id", "")
+                        if not cve_id:
+                            continue
 
-                    descs = cve_data.get("descriptions", [])
-                    desc  = next((d["value"] for d in descs if d.get("lang") == "en"), "")
+                        descs = cve_data.get("descriptions", [])
+                        desc  = next((d["value"] for d in descs if d.get("lang") == "en"), "")
 
-                    metrics  = cve_data.get("metrics", {})
-                    cvss     = None
-                    severity = None
-                    for mk in ["cvssMetricV40","cvssMetricV31","cvssMetricV30","cvssMetricV2"]:
-                        if mk in metrics and metrics[mk]:
-                            try:
-                                entry    = metrics[mk][0]
-                                cvss     = float(entry["cvssData"]["baseScore"])
-                                severity = (entry["cvssData"].get("baseSeverity")
-                                            or entry.get("baseSeverity", ""))
-                            except Exception:
-                                pass
-                            break
-                    if not severity and cvss is not None:
-                        if   cvss >= 9.0: severity = "Critical"
-                        elif cvss >= 7.0: severity = "High"
-                        elif cvss >= 4.0: severity = "Medium"
-                        else:             severity = "Low"
-                    severity = (severity or "Unknown").capitalize()
+                        metrics  = cve_data.get("metrics", {})
+                        cvss = severity = None
+                        for mk in ["cvssMetricV40","cvssMetricV31","cvssMetricV30","cvssMetricV2"]:
+                            if mk in metrics and metrics[mk]:
+                                try:
+                                    e2 = metrics[mk][0]
+                                    cvss     = float(e2["cvssData"]["baseScore"])
+                                    severity = (e2["cvssData"].get("baseSeverity")
+                                                or e2.get("baseSeverity",""))
+                                except Exception:
+                                    pass
+                                break
+                        if not severity and cvss is not None:
+                            if   cvss >= 9.0: severity = "Critical"
+                            elif cvss >= 7.0: severity = "High"
+                            elif cvss >= 4.0: severity = "Medium"
+                            else:             severity = "Low"
+                        severity = (severity or "Unknown").capitalize()
 
-                    published     = cve_data.get("published",    "")[:10]
-                    last_modified = cve_data.get("lastModified", "")[:10]
+                        published     = cve_data.get("published",    "")[:10]
+                        last_modified = cve_data.get("lastModified", "")[:10]
 
-                    cwe_id = ""
-                    for w in cve_data.get("weaknesses", []):
-                        for d in w.get("description", []):
-                            if d.get("lang") == "en":
-                                cwe_id = d.get("value", ""); break
+                        cwe_id = ""
+                        for w in cve_data.get("weaknesses", []):
+                            for d in w.get("description", []):
+                                if d.get("lang") == "en":
+                                    cwe_id = d.get("value",""); break
 
-                    refs = [r.get("url", "") for r in cve_data.get("references", [])[:10]]
+                        refs = [r.get("url","") for r in cve_data.get("references",[])[:10]]
 
-                    # CPE version ranges
-                    affected_versions = ""
-                    try:
-                        ver_parts = []
-                        for cfg in cve_data.get("configurations", []):
-                            for node in cfg.get("nodes", []):
-                                for m in node.get("cpeMatch", []):
-                                    if not m.get("vulnerable"): continue
-                                    ve  = m.get("versionEndExcluding", "")
-                                    vei = m.get("versionEndIncluding", "")
-                                    vi  = m.get("versionStartIncluding", "")
-                                    if ve:    ver_parts.append(f"< {ve}")
-                                    elif vei: ver_parts.append(f"<= {vei}")
-                                    elif vi:  ver_parts.append(f">= {vi}")
-                        if ver_parts:
-                            seen, unique = set(), []
-                            for v in ver_parts:
-                                if v not in seen: seen.add(v); unique.append(v)
-                            affected_versions = ", ".join(unique[:5])
-                    except Exception:
-                        pass
+                        affected_versions = ""
+                        try:
+                            ver_parts = []
+                            for cfg in cve_data.get("configurations", []):
+                                for node in cfg.get("nodes", []):
+                                    for m in node.get("cpeMatch", []):
+                                        if not m.get("vulnerable"): continue
+                                        ve  = m.get("versionEndExcluding","")
+                                        vei = m.get("versionEndIncluding","")
+                                        vi  = m.get("versionStartIncluding","")
+                                        if ve:    ver_parts.append(f"< {ve}")
+                                        elif vei: ver_parts.append(f"<= {vei}")
+                                        elif vi:  ver_parts.append(f">= {vi}")
+                            if ver_parts:
+                                seen, unique = set(), []
+                                for v in ver_parts:
+                                    if v not in seen: seen.add(v); unique.append(v)
+                                affected_versions = ", ".join(unique[:5])
+                        except Exception:
+                            pass
 
-                    cursor.execute("SELECT cve_id FROM cves WHERE cve_id=?", (cve_id,))
-                    if cursor.fetchone():
-                        cursor.execute("""
-                            UPDATE cves SET description=?,cvss_score=?,severity=?,
-                            published=?,last_modified=?,cwe_id=?,"references"=?,
-                            affected_versions=? WHERE cve_id=?
-                        """, (desc, cvss, severity, published, last_modified,
-                              cwe_id, json.dumps(refs), affected_versions, cve_id))
-                        updated += 1
-                    else:
-                        cursor.execute("""
-                            INSERT INTO cves
-                              (cve_id,description,cvss_score,severity,published,
-                               last_modified,cwe_id,"references",affected_versions)
-                            VALUES (?,?,?,?,?,?,?,?,?)
-                        """, (cve_id, desc, cvss, severity, published, last_modified,
-                              cwe_id, json.dumps(refs), affected_versions))
-                        added += 1
-                conn.commit()
-                start_index += results_per
-                if start_index >= total_results:
-                    break
-                time.sleep(0.7 if user_key else 6)
+                        cursor.execute("SELECT cve_id FROM cves WHERE cve_id=?", (cve_id,))
+                        if cursor.fetchone():
+                            cursor.execute("""
+                                UPDATE cves SET description=?,cvss_score=?,severity=?,
+                                published=?,last_modified=?,cwe_id=?,"references"=?,
+                                affected_versions=? WHERE cve_id=?
+                            """, (desc,cvss,severity,published,last_modified,
+                                  cwe_id,json.dumps(refs),affected_versions,cve_id))
+                            updated += 1
+                        else:
+                            cursor.execute("""
+                                INSERT INTO cves
+                                  (cve_id,description,cvss_score,severity,published,
+                                   last_modified,cwe_id,"references",affected_versions)
+                                VALUES (?,?,?,?,?,?,?,?,?)
+                            """, (cve_id,desc,cvss,severity,published,last_modified,
+                                  cwe_id,json.dumps(refs),affected_versions))
+                            added += 1
 
-            except Exception as ex:
-                _log(f"Fetch error: {ex}")
-                time.sleep(5)
-                continue
+                    conn.commit()
+                    start_index += results_per
+                    if start_index >= total_results:
+                        break
+                    time.sleep(0.7 if user_key else 6)
+
+                except Exception as ex:
+                    _log(f"Fetch error: {ex}")
+                    time.sleep(5)
+                    continue
 
         conn.close()
-        msg = f"Done — {added:,} added, {updated:,} updated (last {DB_UPDATE_DAYS} days)"
+        msg = f"Done — {added:,} added, {updated:,} updated"
         _log(f"✅ {msg}", progress=100)
         with _nvd_lock:
-            _nvd_job.update({"done": True, "success": True, "status": msg,
-                             "running": False})
+            _nvd_job.update({"done":True,"success":True,"status":msg,"running":False})
 
     except Exception as ex:
         print(f"[NVD] Fatal: {ex}")
         with _nvd_lock:
-            _nvd_job.update({"done": True, "success": False,
-                             "status": f"Fatal error: {ex}", "running": False})
+            _nvd_job.update({"done":True,"success":False,
+                             "status":f"Fatal error: {ex}","running":False})
 
 
 @app.route("/api/nvd-update", methods=["POST"])
