@@ -428,6 +428,40 @@ def init_database():
     except: pass
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_analysis_fix_status ON cve_ai_analysis(fix_status)")
 
+    # Migrate cves table — add missing columns (handles old DB from GitHub Releases)
+    try:
+        for _col, _defn in [
+            ("severity",          "TEXT"),
+            ("affected_versions", "TEXT"),
+            ("source",            "TEXT"),
+            ("is_kev",            "INTEGER DEFAULT 0"),
+            ("kev_date_added",    "TEXT"),
+            ("kev_ransomware",    "TEXT"),
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE cves ADD COLUMN {_col} {_defn}")
+                print(f"🔧 Added column: {_col}")
+            except Exception:
+                pass  # Already exists
+
+        # Populate severity from cvss_score where missing
+        cursor.execute("""
+            UPDATE cves SET severity =
+                CASE
+                    WHEN CAST(cvss_score AS REAL) >= 9.0 THEN 'Critical'
+                    WHEN CAST(cvss_score AS REAL) >= 7.0 THEN 'High'
+                    WHEN CAST(cvss_score AS REAL) >= 4.0 THEN 'Medium'
+                    WHEN CAST(cvss_score AS REAL) >  0   THEN 'Low'
+                    ELSE 'Unknown'
+                END
+            WHERE severity IS NULL OR severity = '' OR severity = 'Unknown'
+        """)
+        populated = cursor.rowcount
+        if populated:
+            print(f"🔧 Populated severity for {populated:,} CVEs")
+    except Exception as e:
+        print(f"⚠️ Migration note: {e}")
+
     conn.commit()
     conn.close()
     print("✅ Database initialized successfully")
