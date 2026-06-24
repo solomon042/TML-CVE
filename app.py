@@ -124,6 +124,64 @@ def _download_db_from_github():
 # Attempt download on startup (only runs if DB missing)
 _download_db_from_github()
 
+def _migrate_severity_bg():
+    """Background: populate severity column after startup — non-blocking."""
+    try:
+        import time as _t
+        _t.sleep(8)  # Wait for gunicorn to finish starting
+        _conn = sqlite3.connect(DB, timeout=300)
+        _cur  = _conn.cursor()
+        # Add column if missing
+        try:
+            _cur.execute("ALTER TABLE cves ADD COLUMN severity TEXT")
+            _conn.commit()
+            print("🔧 [bg] Added severity column to DB")
+        except Exception:
+            pass  # Column already exists — that's fine
+
+        # Count rows needing update
+        _cur.execute(
+            "SELECT COUNT(*) FROM cves WHERE severity IS NULL OR severity='' OR severity='Unknown'"
+        )
+        _need = _cur.fetchone()[0]
+        if _need == 0:
+            print("✅ [bg] severity already populated")
+            _conn.close()
+            _build_stats_cache()
+            return
+
+        print(f"🔧 [bg] Populating severity for {_need:,} CVEs in batches...")
+        _done = 0
+        while True:
+            _cur.execute("""
+                UPDATE cves SET severity =
+                    CASE
+                        WHEN CAST(cvss_score AS REAL) >= 9.0 THEN 'Critical'
+                        WHEN CAST(cvss_score AS REAL) >= 7.0 THEN 'High'
+                        WHEN CAST(cvss_score AS REAL) >= 4.0 THEN 'Medium'
+                        WHEN CAST(cvss_score AS REAL) >  0   THEN 'Low'
+                        ELSE 'Unknown'
+                    END
+                WHERE rowid IN (
+                    SELECT rowid FROM cves
+                    WHERE severity IS NULL OR severity='' OR severity='Unknown'
+                    LIMIT 10000
+                )
+            """)
+            _n = _cur.rowcount
+            _conn.commit()
+            _done += _n
+            if _n == 0:
+                break
+        _conn.close()
+        print(f"✅ [bg] severity populated for {_done:,} CVEs")
+        _build_stats_cache()  # Rebuild stats with correct severity counts
+    except Exception as _e:
+        print(f"⚠️ [bg] severity migration: {_e}")
+
+# Start background severity migration (completely non-blocking)
+threading.Thread(target=_migrate_severity_bg, daemon=True).start()
+
 app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
@@ -1954,29 +2012,40 @@ def _build_stats_cache():
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cves'")
         if not cursor.fetchone():
             conn.close(); return
-        # Single pass — much faster than 6 separate COUNTs
-        cursor.execute("""
-            SELECT
-                COUNT(*),
-                SUM(CASE
-                    WHEN cvss_score >= 9.0 THEN 1
-                    WHEN UPPER(severity) = 'CRITICAL' THEN 1
-                    ELSE 0 END),
-                SUM(CASE
-                    WHEN cvss_score >= 7.0 AND cvss_score < 9.0 THEN 1
-                    WHEN UPPER(severity) = 'HIGH' AND (cvss_score IS NULL OR cvss_score = 0) THEN 1
-                    ELSE 0 END),
-                SUM(CASE
-                    WHEN cvss_score >= 4.0 AND cvss_score < 7.0 THEN 1
-                    WHEN UPPER(severity) = 'MEDIUM' AND (cvss_score IS NULL OR cvss_score = 0) THEN 1
-                    ELSE 0 END),
-                SUM(CASE
-                    WHEN cvss_score > 0 AND cvss_score < 4.0 THEN 1
-                    WHEN UPPER(severity) = 'LOW' AND (cvss_score IS NULL OR cvss_score = 0) THEN 1
-                    ELSE 0 END),
-                MIN(published), MAX(published)
-            FROM cves
-        """)
+        # Check if severity column exists first
+        cursor.execute("PRAGMA table_info(cves)")
+        col_names = {row[1] for row in cursor.fetchall()}
+        has_sev = "severity" in col_names
+
+        # Single pass — uses severity text if available, falls back to cvss_score only
+        if has_sev:
+            cursor.execute("""
+                SELECT
+                    COUNT(*),
+                    SUM(CASE WHEN cvss_score >= 9.0 OR UPPER(severity)='CRITICAL' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN cvss_score >= 7.0 AND cvss_score < 9.0
+                             OR (UPPER(severity)='HIGH' AND (cvss_score IS NULL OR cvss_score=0))
+                             THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN cvss_score >= 4.0 AND cvss_score < 7.0
+                             OR (UPPER(severity)='MEDIUM' AND (cvss_score IS NULL OR cvss_score=0))
+                             THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN cvss_score > 0 AND cvss_score < 4.0
+                             OR (UPPER(severity)='LOW' AND (cvss_score IS NULL OR cvss_score=0))
+                             THEN 1 ELSE 0 END),
+                    MIN(published), MAX(published)
+                FROM cves
+            """)
+        else:
+            cursor.execute("""
+                SELECT
+                    COUNT(*),
+                    SUM(CASE WHEN cvss_score >= 9.0 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN cvss_score >= 7.0 AND cvss_score < 9.0 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN cvss_score >= 4.0 AND cvss_score < 7.0 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN cvss_score > 0   AND cvss_score < 4.0 THEN 1 ELSE 0 END),
+                    MIN(published), MAX(published)
+                FROM cves
+            """)
         total, crit, high, med, low, oldest, newest = cursor.fetchone()
         cursor.execute("SELECT COUNT(*) FROM cve_ai_analysis")
         ai_enhanced = cursor.fetchone()[0]
