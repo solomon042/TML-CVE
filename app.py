@@ -386,6 +386,42 @@ def init_database():
     conn = sqlite3.connect(DB)
     cursor = conn.cursor()
 
+    # ── User authentication tables ──────────────────────────────────────
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        username     TEXT UNIQUE NOT NULL,
+        email        TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role         TEXT DEFAULT 'user',
+        approved     INTEGER DEFAULT 0,
+        created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_login   TIMESTAMP
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_api_keys (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id      INTEGER NOT NULL,
+        provider     TEXT NOT NULL,
+        model        TEXT,
+        api_key_enc  TEXT,
+        created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_sessions (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id      INTEGER NOT NULL,
+        event        TEXT,
+        ip_address   TEXT,
+        created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS cve_ai_analysis (
         cve_id TEXT PRIMARY KEY,
@@ -1637,9 +1673,106 @@ def _upload_db_to_github():
         print(f"❌ Upload failed: HTTP {upload_resp.status_code}")
         return False
 
+
+# ============================================================
+# USER AUTHENTICATION HELPERS
+# ============================================================
+from werkzeug.security import generate_password_hash, check_password_hash
+import base64
+
+def _encrypt_key(api_key: str) -> str:
+    """Simple reversible encryption for API keys using app secret."""
+    if not api_key:
+        return ""
+    secret = (app.config['SECRET_KEY'] + "salt_key")[:32].ljust(32)[:32].encode()
+    key_bytes = api_key.encode()
+    encrypted = bytes(a ^ b for a, b in zip(key_bytes, (secret * (len(key_bytes)//32+1))[:len(key_bytes)]))
+    return base64.urlsafe_b64encode(encrypted).decode()
+
+def _decrypt_key(encrypted: str) -> str:
+    """Decrypt API key."""
+    if not encrypted:
+        return ""
+    try:
+        secret = (app.config['SECRET_KEY'] + "salt_key")[:32].ljust(32)[:32].encode()
+        enc_bytes = base64.urlsafe_b64decode(encrypted.encode())
+        decrypted = bytes(a ^ b for a, b in zip(enc_bytes, (secret * (len(enc_bytes)//32+1))[:len(enc_bytes)]))
+        return decrypted.decode()
+    except Exception:
+        return ""
+
+def get_current_user():
+    """Get logged-in user from session."""
+    from flask import session as fs
+    user_id = fs.get("user_id")
+    if not user_id:
+        return None
+    try:
+        conn = sqlite3.connect(DB)
+        cur  = conn.cursor()
+        cur.execute("SELECT id,username,email,role,approved FROM users WHERE id=?", (user_id,))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            return {"id":row[0],"username":row[1],"email":row[2],
+                    "role":row[3],"approved":row[4]}
+    except Exception:
+        pass
+    return None
+
+def login_required(f):
+    """Require logged-in approved user."""
+    from functools import wraps
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        user = get_current_user()
+        if not user:
+            return redirect(url_for("user_login", next=request.path))
+        if not user["approved"]:
+            return redirect(url_for("pending_approval"))
+        return f(*args, **kwargs)
+    return decorated
+
+def get_user_ai_config():
+    """Get AI config for current user — falls back to session then env defaults."""
+    from flask import session as fs
+    user = get_current_user()
+
+    # Try user's saved API key from DB first
+    if user:
+        try:
+            conn = sqlite3.connect(DB)
+            cur  = conn.cursor()
+            cur.execute("""
+                SELECT provider, model, api_key_enc
+                FROM user_api_keys WHERE user_id=?
+                ORDER BY created_at DESC LIMIT 1
+            """, (user["id"],))
+            row = cur.fetchone()
+            conn.close()
+            if row and row[2]:
+                return row[0], _decrypt_key(row[2]), row[1] or ""
+        except Exception:
+            pass
+
+    # Fall back to session-stored key (existing behaviour)
+    return get_ai_config()
+
 # ============================================================
 # ROUTES
 # ============================================================
+
+
+@app.route("/do-update-db")
+def do_update_db():
+    """Smart redirect for Update DB button in header.
+    If admin logged in → go to /update-cve directly.
+    If not → go to admin login first.
+    """
+    from flask import session as fs
+    if fs.get("admin_logged_in"):
+        return redirect(url_for("update_cve_page"))
+    return redirect(url_for("admin_login", next="/update-cve"))
 
 @app.route("/search", methods=["POST"])
 def search_post():
@@ -2614,6 +2747,9 @@ def admin_panel():
               onclick="adminAction('/admin/save-db-to-github','Save updated DB to GitHub Releases? (requires GITHUB_TOKEN)')">
         <i class="bi bi-cloud-upload me-1"></i>Save DB to GitHub
       </button>
+      <a href="/admin/users" class="btn btn-outline-primary action-btn">
+        <i class="bi bi-people me-1"></i>Manage Users
+      </a>
       <a href="/settings" class="btn btn-outline-primary action-btn">
         <i class="bi bi-gear me-1"></i>AI Settings
       </a>
@@ -2654,12 +2790,31 @@ async function adminAction(url, confirmMsg) {{
   res.textContent = 'Working...';
   try {{
     const r = await fetch(url);
-    const d = await r.json();
-    res.className = 'alert alert-success py-2';
-    res.textContent = d.message || JSON.stringify(d);
+    const text = await r.text();
+    if (r.status === 302 || r.redirected) {{
+      res.className = 'alert alert-warning py-2';
+      res.textContent = 'Session expired — please log in again.';
+      setTimeout(() => window.location.href = '/admin/login', 1500);
+      return;
+    }}
+    try {{
+      const d = JSON.parse(text);
+      res.className = d.ok === false ? 'alert alert-danger py-2' : 'alert alert-success py-2';
+      res.textContent = d.message || JSON.stringify(d);
+    }} catch(e) {{
+      // Response was HTML not JSON — likely a redirect to login
+      if (text.includes('Admin Panel') || text.includes('login')) {{
+        res.className = 'alert alert-warning py-2';
+        res.textContent = 'Session expired — please log in again.';
+        setTimeout(() => window.location.href = '/admin/login', 1500);
+      }} else {{
+        res.className = 'alert alert-danger py-2';
+        res.textContent = 'Unexpected response. Check Koyeb logs.';
+      }}
+    }}
   }} catch(e) {{
     res.className = 'alert alert-danger py-2';
-    res.textContent = 'Error: ' + e.message;
+    res.textContent = 'Network error: ' + e.message;
   }}
 }}
 </script>
@@ -3488,6 +3643,474 @@ def webhook_update_db():
                      args=(user_key,), daemon=True).start()
     return jsonify({"status": "started", "message": "NVD update triggered"}), 200
 
+
+# ============================================================
+# USER AUTH ROUTES
+# ============================================================
+
+@app.route("/register", methods=["GET","POST"])
+def user_register():
+    error = ""
+    if request.method == "POST":
+        username = request.form.get("username","").strip()
+        email    = request.form.get("email","").strip().lower()
+        password = request.form.get("password","").strip()
+        confirm  = request.form.get("confirm","").strip()
+
+        if not all([username, email, password]):
+            error = "All fields are required."
+        elif password != confirm:
+            error = "Passwords do not match."
+        elif len(password) < 8:
+            error = "Password must be at least 8 characters."
+        else:
+            try:
+                conn = sqlite3.connect(DB)
+                cur  = conn.cursor()
+                cur.execute("""
+                    INSERT INTO users (username, email, password_hash, role, approved)
+                    VALUES (?,?,?,'user',0)
+                """, (username, email, generate_password_hash(password)))
+                conn.commit()
+                conn.close()
+                return redirect(url_for("pending_approval"))
+            except sqlite3.IntegrityError:
+                error = "Username or email already registered."
+            except Exception as e:
+                error = f"Registration failed: {e}"
+
+    return f"""<!DOCTYPE html>
+<html><head><title>Register — CVE Dashboard</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+<style>
+body{{background:#0f172a;min-height:100vh;display:flex;align-items:center;justify-content:center;}}
+.card{{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:36px;width:420px;}}
+.form-control{{background:#0f172a!important;border-color:#334155!important;color:#e2e8f0!important;}}
+label{{color:#94a3b8;font-size:.85rem;}} h4{{color:#e2e8f0;}}
+</style></head><body>
+<div class="card">
+  <div class="text-center mb-4">
+    <i class="bi bi-person-plus-fill" style="font-size:2rem;color:#3b82f6"></i>
+    <h4 class="mt-2">Create Account</h4>
+    <p style="color:#64748b;font-size:.82rem">CVE Monitoring Dashboard</p>
+  </div>
+  {'<div class="alert alert-danger py-2">' + error + '</div>' if error else ''}
+  <form method="POST">
+    <div class="mb-3">
+      <label>Username</label>
+      <input type="text" name="username" class="form-control mt-1" required autofocus>
+    </div>
+    <div class="mb-3">
+      <label>Email</label>
+      <input type="email" name="email" class="form-control mt-1" required>
+    </div>
+    <div class="mb-3">
+      <label>Password</label>
+      <input type="password" name="password" class="form-control mt-1" required>
+    </div>
+    <div class="mb-4">
+      <label>Confirm Password</label>
+      <input type="password" name="confirm" class="form-control mt-1" required>
+    </div>
+    <button type="submit" class="btn btn-primary w-100">Register</button>
+    <p class="text-center mt-3" style="color:#64748b;font-size:.83rem">
+      Already registered? <a href="/login" style="color:#3b82f6">Login</a>
+    </p>
+  </form>
+</div>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+</body></html>"""
+
+
+@app.route("/login", methods=["GET","POST"])
+def user_login():
+    from flask import session as fs
+    error = ""
+    if request.method == "POST":
+        username = request.form.get("username","").strip()
+        password = request.form.get("password","").strip()
+        try:
+            conn = sqlite3.connect(DB)
+            cur  = conn.cursor()
+            cur.execute("""
+                SELECT id,username,email,role,approved,password_hash
+                FROM users WHERE username=? OR email=?
+            """, (username, username.lower()))
+            row = cur.fetchone()
+            if row and check_password_hash(row[5], password):
+                if not row[4]:  # not approved
+                    conn.close()
+                    return redirect(url_for("pending_approval"))
+                fs["user_id"]       = row[0]
+                fs["user_username"] = row[1]
+                fs["user_role"]     = row[3]
+                # Log login
+                conn.execute("UPDATE users SET last_login=CURRENT_TIMESTAMP WHERE id=?", (row[0],))
+                conn.execute("INSERT INTO user_sessions (user_id,event,ip_address) VALUES (?,'login',?)",
+                             (row[0], request.remote_addr))
+                conn.commit()
+                conn.close()
+                next_url = request.args.get("next", "/")
+                return redirect(next_url)
+            conn.close()
+            error = "Invalid username or password."
+        except Exception as e:
+            error = f"Login error: {e}"
+
+    return f"""<!DOCTYPE html>
+<html><head><title>Login — CVE Dashboard</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+<style>
+body{{background:#0f172a;min-height:100vh;display:flex;align-items:center;justify-content:center;}}
+.card{{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:36px;width:380px;}}
+.form-control{{background:#0f172a!important;border-color:#334155!important;color:#e2e8f0!important;}}
+label{{color:#94a3b8;font-size:.85rem;}} h4{{color:#e2e8f0;}}
+</style></head><body>
+<div class="card">
+  <div class="text-center mb-4">
+    <i class="bi bi-shield-lock-fill" style="font-size:2rem;color:#3b82f6"></i>
+    <h4 class="mt-2">CVE Dashboard Login</h4>
+    <p style="color:#64748b;font-size:.82rem">TMPVL Cybersecurity Team</p>
+  </div>
+  {'<div class="alert alert-danger py-2">' + error + '</div>' if error else ''}
+  <form method="POST">
+    <div class="mb-3">
+      <label>Username or Email</label>
+      <input type="text" name="username" class="form-control mt-1" required autofocus>
+    </div>
+    <div class="mb-4">
+      <label>Password</label>
+      <input type="password" name="password" class="form-control mt-1" required>
+    </div>
+    <button type="submit" class="btn btn-primary w-100">Login</button>
+    <p class="text-center mt-3" style="color:#64748b;font-size:.83rem">
+      New user? <a href="/register" style="color:#3b82f6">Register here</a>
+    </p>
+  </form>
+</div>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+</body></html>"""
+
+
+@app.route("/logout")
+def user_logout():
+    from flask import session as fs
+    fs.pop("user_id", None)
+    fs.pop("user_username", None)
+    fs.pop("user_role", None)
+    return redirect(url_for("user_login"))
+
+
+@app.route("/pending-approval")
+def pending_approval():
+    return """<!DOCTYPE html>
+<html><head><title>Pending Approval</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+<style>body{background:#0f172a;min-height:100vh;display:flex;align-items:center;justify-content:center;}</style>
+</head><body>
+<div style="background:#1e293b;border:1px solid #334155;border-radius:16px;padding:40px;max-width:440px;text-align:center">
+  <div style="font-size:3rem">⏳</div>
+  <h4 style="color:#e2e8f0;margin-top:12px">Account Pending Approval</h4>
+  <p style="color:#94a3b8;font-size:.88rem;margin-top:8px">
+    Your account has been created successfully.<br>
+    An admin will review and approve your access shortly.<br>
+    You will be able to login once approved.
+  </p>
+  <a href="/login" class="btn btn-outline-primary mt-3">Back to Login</a>
+</div>
+</body></html>"""
+
+
+@app.route("/profile", methods=["GET"])
+@login_required
+def user_profile():
+    from flask import session as fs
+    user = get_current_user()
+    # Get saved API key
+    saved_provider = saved_model = ""
+    has_key = False
+    try:
+        conn = sqlite3.connect(DB)
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT provider, model, api_key_enc
+            FROM user_api_keys WHERE user_id=? ORDER BY created_at DESC LIMIT 1
+        """, (user["id"],))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            saved_provider = row[0]
+            saved_model    = row[1] or ""
+            has_key        = bool(row[2])
+    except Exception:
+        pass
+
+    # Usage stats
+    try:
+        conn = sqlite3.connect(DB)
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT COUNT(*), DATE(created_at)
+            FROM usage_analytics
+            WHERE ip_hash=?
+            GROUP BY DATE(created_at)
+            ORDER BY DATE(created_at) DESC LIMIT 7
+        """, (hashlib.sha256((request.remote_addr or "").encode()).hexdigest()[:16],))
+        usage = cur.fetchall()
+        conn.close()
+    except Exception:
+        usage = []
+
+    providers_opts = "".join(
+        f'<option value="{p}" {"selected" if p==saved_provider else ""}>{p.capitalize()}</option>'
+        for p in ["deepseek","openai","claude"]
+    )
+    usage_rows = "".join(
+        f"<tr><td>{r[1]}</td><td>{r[0]} AI calls</td></tr>" for r in usage
+    ) or "<tr><td colspan=2 class='text-muted'>No usage yet</td></tr>"
+
+    return f"""<!DOCTYPE html>
+<html><head><title>My Profile — CVE Dashboard</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+<style>body{{background:#f1f5f9;font-family:'Inter',sans-serif;}}</style>
+</head><body>
+<div class="container py-4" style="max-width:700px">
+  <div class="d-flex align-items-center gap-3 mb-4">
+    <a href="/" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left"></i></a>
+    <h4 class="mb-0"><i class="bi bi-person-circle me-2"></i>My Profile</h4>
+    <a href="/logout" class="btn btn-outline-danger btn-sm ms-auto">Logout</a>
+  </div>
+
+  <div class="card border-0 shadow-sm rounded-3 p-4 mb-4">
+    <h6 class="text-muted mb-3 text-uppercase" style="font-size:.75rem;letter-spacing:.5px">Account Info</h6>
+    <p class="mb-1"><b>Username:</b> {user["username"]}</p>
+    <p class="mb-1"><b>Email:</b> {user["email"]}</p>
+    <p class="mb-0"><b>Role:</b> <span class="badge {'bg-danger' if user['role']=='admin' else 'bg-primary'}">{user["role"]}</span></p>
+  </div>
+
+  <div class="card border-0 shadow-sm rounded-3 p-4 mb-4">
+    <h6 class="text-muted mb-3 text-uppercase" style="font-size:.75rem;letter-spacing:.5px">
+      <i class="bi bi-key me-1"></i>My AI API Key
+    </h6>
+    <p style="font-size:.83rem;color:#64748b">
+      Your key is stored securely and never shared. It is used for AI analysis of CVEs.
+      The analysis results are cached and shared with all users — saving API costs.
+    </p>
+    <div id="keyResult" class="mb-2"></div>
+    <div class="mb-3">
+      <label class="form-label">Provider</label>
+      <select class="form-select" id="provSel">{providers_opts}</select>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Model</label>
+      <input type="text" class="form-control" id="modelInp"
+             placeholder="e.g. deepseek-chat" value="{saved_model}">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">API Key {'<span class="badge bg-success">Saved</span>' if has_key else ''}</label>
+      <div class="input-group">
+        <input type="password" class="form-control" id="keyInp" placeholder="Paste your API key">
+        <button class="btn btn-outline-secondary" onclick="var f=document.getElementById('keyInp');f.type=f.type=='password'?'text':'password'">
+          <i class="bi bi-eye"></i>
+        </button>
+      </div>
+    </div>
+    <button class="btn btn-primary" onclick="saveKey()">
+      <i class="bi bi-save me-1"></i>Save API Key
+    </button>
+  </div>
+
+  <div class="card border-0 shadow-sm rounded-3 p-4">
+    <h6 class="text-muted mb-3 text-uppercase" style="font-size:.75rem;letter-spacing:.5px">
+      <i class="bi bi-graph-up me-1"></i>My Usage (Last 7 Days)
+    </h6>
+    <table class="table table-sm">
+      <thead><tr><th>Date</th><th>Activity</th></tr></thead>
+      <tbody>{usage_rows}</tbody>
+    </table>
+  </div>
+</div>
+<script>
+async function saveKey() {{
+  const provider = document.getElementById('provSel').value;
+  const model    = document.getElementById('modelInp').value.trim();
+  const api_key  = document.getElementById('keyInp').value.trim();
+  const res      = document.getElementById('keyResult');
+  if (!api_key) {{ res.innerHTML='<div class="alert alert-warning py-2">Enter your API key first</div>'; return; }}
+  const r = await fetch('/profile/save-key', {{
+    method:'POST', headers:{{'Content-Type':'application/json'}},
+    body: JSON.stringify({{provider, model, api_key}})
+  }});
+  const d = await r.json();
+  res.innerHTML = d.ok
+    ? '<div class="alert alert-success py-2">✅ ' + d.message + '</div>'
+    : '<div class="alert alert-danger py-2">❌ ' + d.message + '</div>';
+}}
+</script>
+</body></html>"""
+
+
+@app.route("/profile/save-key", methods=["POST"])
+@login_required
+def profile_save_key():
+    user = get_current_user()
+    data = request.get_json() or {}
+    provider = data.get("provider","deepseek")
+    model    = data.get("model","")
+    api_key  = data.get("api_key","").strip()
+    if not api_key:
+        return jsonify({"ok":False,"message":"API key cannot be empty"})
+    try:
+        enc = _encrypt_key(api_key)
+        conn = sqlite3.connect(DB)
+        # Delete old key for this user
+        conn.execute("DELETE FROM user_api_keys WHERE user_id=?", (user["id"],))
+        conn.execute("""
+            INSERT INTO user_api_keys (user_id,provider,model,api_key_enc)
+            VALUES (?,?,?,?)
+        """, (user["id"], provider, model, enc))
+        conn.commit()
+        conn.close()
+        return jsonify({"ok":True,"message":"API key saved securely"})
+    except Exception as e:
+        return jsonify({"ok":False,"message":str(e)})
+
+
+# ── ADMIN: User Management ────────────────────────────────────────────────
+
+@app.route("/admin/users")
+@admin_required
+def admin_users():
+    conn = sqlite3.connect(DB)
+    cur  = conn.cursor()
+    cur.execute("""
+        SELECT u.id, u.username, u.email, u.role, u.approved,
+               u.created_at, u.last_login,
+               k.provider, k.model,
+               (SELECT COUNT(*) FROM user_sessions s WHERE s.user_id=u.id) as logins
+        FROM users u
+        LEFT JOIN user_api_keys k ON k.user_id=u.id
+        ORDER BY u.created_at DESC
+    """)
+    users = cur.fetchall()
+    conn.close()
+
+    rows = ""
+    for u in users:
+        approved = u[4]
+        badge = '<span class="badge bg-success">Active</span>' if approved else                 '<span class="badge bg-warning text-dark">Pending</span>'
+        action = f"""
+          <button class="btn btn-xs btn-success btn-sm" onclick="manageUser({u[0]},'approve')">Approve</button>
+          <button class="btn btn-xs btn-danger btn-sm" onclick="manageUser({u[0]},'revoke')">Revoke</button>
+          <button class="btn btn-xs btn-outline-danger btn-sm" onclick="manageUser({u[0]},'delete')">Delete</button>
+        """ if not approved else f"""
+          <button class="btn btn-danger btn-sm" onclick="manageUser({u[0]},'revoke')">Revoke</button>
+          <button class="btn btn-outline-danger btn-sm" onclick="manageUser({u[0]},'delete')">Delete</button>
+        """
+        rows += f"""<tr>
+          <td>{u[1]}</td><td style="font-size:.8rem">{u[2]}</td>
+          <td><span class="badge {'bg-danger' if u[3]=='admin' else 'bg-primary'}">{u[3]}</span></td>
+          <td>{badge}</td>
+          <td style="font-size:.8rem">{u[7] or '—'} / {u[8] or '—'}</td>
+          <td>{u[9]} logins</td>
+          <td>{action}</td>
+        </tr>"""
+
+    pending_count = sum(1 for u in users if not u[4])
+
+    return f"""<!DOCTYPE html>
+<html><head><title>User Management</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+<style>body{{background:#f1f5f9;font-family:'Inter',sans-serif;}}</style>
+</head><body class="p-4">
+<div class="container" style="max-width:1000px">
+  <div class="d-flex align-items-center gap-3 mb-4">
+    <a href="/admin" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left"></i></a>
+    <h4 class="mb-0"><i class="bi bi-people me-2"></i>User Management</h4>
+    {'<span class="badge bg-warning text-dark ms-2">'+str(pending_count)+' pending approval</span>' if pending_count else ''}
+  </div>
+  <div id="result" class="mb-3"></div>
+  <div class="card border-0 shadow-sm rounded-3 overflow-hidden">
+  <table class="table table-sm mb-0">
+    <thead class="table-dark">
+      <tr>
+        <th>Username</th><th>Email</th><th>Role</th><th>Status</th>
+        <th>AI Provider/Model</th><th>Activity</th><th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>{rows or '<tr><td colspan=7 class="text-center text-muted p-4">No users registered yet</td></tr>'}</tbody>
+  </table>
+  </div>
+</div>
+<script>
+async function manageUser(uid, action) {{
+  if (!confirm(action + ' this user?')) return;
+  const r = await fetch('/admin/users/' + action + '/' + uid, {{method:'POST'}});
+  const d = await r.json();
+  document.getElementById('result').innerHTML = d.ok
+    ? '<div class="alert alert-success">' + d.message + '</div>'
+    : '<div class="alert alert-danger">' + d.message + '</div>';
+  setTimeout(() => location.reload(), 1500);
+}}
+</script>
+</body></html>"""
+
+
+@app.route("/admin/users/approve/<int:uid>", methods=["POST"])
+@admin_required
+def admin_approve_user(uid):
+    try:
+        conn = sqlite3.connect(DB)
+        conn.execute("UPDATE users SET approved=1 WHERE id=?", (uid,))
+        conn.commit()
+        conn.close()
+        return jsonify({"ok":True,"message":"User approved — they can now login"})
+    except Exception as e:
+        return jsonify({"ok":False,"message":str(e)})
+
+
+@app.route("/admin/users/revoke/<int:uid>", methods=["POST"])
+@admin_required
+def admin_revoke_user(uid):
+    try:
+        conn = sqlite3.connect(DB)
+        conn.execute("UPDATE users SET approved=0 WHERE id=?", (uid,))
+        conn.commit()
+        conn.close()
+        return jsonify({"ok":True,"message":"User access revoked"})
+    except Exception as e:
+        return jsonify({"ok":False,"message":str(e)})
+
+
+@app.route("/admin/users/delete/<int:uid>", methods=["POST"])
+@admin_required
+def admin_delete_user(uid):
+    try:
+        conn = sqlite3.connect(DB)
+        conn.execute("DELETE FROM user_api_keys WHERE user_id=?", (uid,))
+        conn.execute("DELETE FROM user_sessions WHERE user_id=?", (uid,))
+        conn.execute("DELETE FROM users WHERE id=?", (uid,))
+        conn.commit()
+        conn.close()
+        return jsonify({"ok":True,"message":"User deleted"})
+    except Exception as e:
+        return jsonify({"ok":False,"message":str(e)})
+
+
+@app.route("/admin/users/make-admin/<int:uid>", methods=["POST"])
+@admin_required
+def admin_make_admin(uid):
+    try:
+        conn = sqlite3.connect(DB)
+        conn.execute("UPDATE users SET role='admin', approved=1 WHERE id=?", (uid,))
+        conn.commit()
+        conn.close()
+        return jsonify({"ok":True,"message":"User promoted to admin"})
+    except Exception as e:
+        return jsonify({"ok":False,"message":str(e)})
+
 @app.route("/admin/fetch-kev")
 @admin_required
 def admin_fetch_kev():
@@ -3629,6 +4252,25 @@ if __name__ == "__main__":
     print(f"   /admin/clear-all-ai   → wipe all AI data (use before sharing)")
     print(f"   /admin/clear-all-cache→ clear stale AI only")
     print("=" * 55)
+
+    # Create default admin user if none exists
+    try:
+        conn = sqlite3.connect(DB)
+        cur  = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users WHERE role='admin'")
+        if cur.fetchone()[0] == 0:
+            admin_user = os.environ.get("ADMIN_USERNAME", "admin")
+            admin_pass = ADMIN_PASSWORD
+            cur.execute("""
+                INSERT OR IGNORE INTO users (username,email,password_hash,role,approved)
+                VALUES (?,?,?,'admin',1)
+            """, (admin_user, f"{admin_user}@cvedashboard.local",
+                  generate_password_hash(admin_pass)))
+            conn.commit()
+            print(f"👤 Default admin user created: {admin_user}")
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ Admin user setup: {e}")
 
     port  = int(os.environ.get("PORT", 5000))
     debug = not _IS_PRODUCTION
