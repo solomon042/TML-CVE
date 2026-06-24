@@ -16,6 +16,7 @@ from functools import lru_cache
 import hashlib
 import re
 import secrets
+import threading
 from datetime import timedelta
 
 # ── LOAD .env FILE (if present) ─────────────────────────────────────────
