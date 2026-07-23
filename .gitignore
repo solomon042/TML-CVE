@@ -134,6 +134,10 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
+# CVE database (auto-downloaded at runtime, ~1GB)
+data/
+*.db
+
 # Environments
 .env
 .envrc

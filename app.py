@@ -17,6 +17,7 @@ import hashlib
 import re
 import secrets
 import threading
+import schedule
 from datetime import timedelta
 
 # ── LOAD .env FILE (if present) ─────────────────────────────────────────
@@ -124,6 +125,42 @@ def _download_db_from_github():
 
 # Attempt download on startup (only runs if DB missing)
 _download_db_from_github()
+
+def _ensure_app_settings_table():
+    """Idempotent — called unconditionally at import time so it also runs
+    under gunicorn (Procfile), not just `python app.py`."""
+    try:
+        conn = sqlite3.connect(DB)
+        conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ app_settings table init: {e}")
+
+_ensure_app_settings_table()
+
+def _get_last_update():
+    try:
+        conn = sqlite3.connect(DB)
+        row  = conn.execute("SELECT value FROM app_settings WHERE key='last_nvd_update'").fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+def _set_last_update():
+    from datetime import datetime, timezone
+    try:
+        conn = sqlite3.connect(DB)
+        conn.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('last_nvd_update', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ last_update save failed: {e}")
 
 def _migrate_severity_bg():
     """Background: populate severity column after startup — non-blocking."""
@@ -2063,7 +2100,8 @@ def _build_stats_cache():
             "ai_enhanced": ai_enhanced or 0,
             "oldest_cve": oldest,
             "newest_cve": newest,
-            "new_7days":  new7 or 0,
+            "new_7_days": new7 or 0,
+            "last_update": _get_last_update(),
         }
         _stats_cache_ts = time.time()
         print(f"📊 Stats cached: {_stats_cache['total_cves']:,} CVEs, "
@@ -2892,207 +2930,260 @@ async function adminAction(url, confirmMsg) {{
 </html>"""
 
 
+def _stream_nvd_update():
+    """
+    Fetch CVE updates from NVD for the last DB_UPDATE_DAYS days and upsert them.
+    Uses NVD API 2.0. Yields plain dicts (progress events) — shared by the
+    admin panel's streaming UI (/admin/update-db) and the background scheduler.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now      = datetime.now(timezone.utc)
+    pub_from = (now - timedelta(days=DB_UPDATE_DAYS)).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+    mod_from = (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+    date_to  = now.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+
+    headers = {"User-Agent": "CVE-Dashboard/1.0"}
+    if NVD_API_KEY:
+        headers["apiKey"] = NVD_API_KEY
+
+    results_per  = 2000
+    added = updated = skipped = 0
+
+    conn   = sqlite3.connect(DB)
+    cursor = conn.cursor()
+
+    # Ensure cves table has all needed columns
+    try:
+        cursor.execute("PRAGMA table_info(cves)")
+        existing_cols = {row[1] for row in cursor.fetchall()}
+        for col in ['cve_id','description','cvss_score','severity','published',
+                    'last_modified','references','cwe_id','affected_versions',
+                    'source','is_kev','kev_date_added','kev_ransomware']:
+            if col not in existing_cols:
+                col_name = '"references"' if col == 'references' else col
+                cursor.execute(f"ALTER TABLE cves ADD COLUMN {col_name} TEXT")
+        conn.commit()
+    except Exception as e:
+        yield {"log": f"Schema check warning: {e}"}
+
+    # TWO-PASS: Pass 1 = new CVEs (pubDate), Pass 2 = updated CVEs (lastModDate)
+    fetch_passes = [
+        ("pubStartDate",     "pubEndDate",     pub_from, date_to, "new CVEs"),
+        ("lastModStartDate", "lastModEndDate", mod_from, date_to, "recently modified CVEs"),
+    ]
+
+    for pass_start_key, pass_end_key, pass_from_dt, pass_to_dt, pass_label in fetch_passes:
+        yield {"log": f"Starting pass: {pass_label}…", "progress": 5}
+        start_index   = 0
+        total_results = None
+
+        while True:
+            params = {
+                pass_start_key:  pass_from_dt,
+                pass_end_key:    pass_to_dt,
+                "startIndex":     start_index,
+                "resultsPerPage": results_per,
+            }
+
+            yield {
+                "status":   f"Fetching records {start_index + 1}\u20132000...",
+                "progress": min(10 + int((start_index / max(total_results or 1, 1)) * 85), 94),
+            }
+
+            try:
+                resp = requests.get(NVD_API_URL, params=params, headers=headers, timeout=60)
+                if resp.status_code == 403:
+                    yield {"done": True, "success": False,
+                                      "status": "NVD API rate limit. Add NVD_API_KEY env var."}
+                    conn.close(); return
+
+                if resp.status_code in (503, 429, 500, 502, 504):
+                    _s = getattr(_stream_nvd_update, "_retry_5xx", 0) + 1
+                    _stream_nvd_update._retry_5xx = _s
+                    if _s <= 5:
+                        wait = min(30 * _s, 120)
+                        yield {"log": f"NVD HTTP {resp.status_code} — server busy, retrying in {wait}s (attempt {_s}/5)..."}
+                        time.sleep(wait)
+                        continue
+                    _stream_nvd_update._retry_5xx = 0
+                    yield {"done": True, "success": False,
+                                      "status": f"NVD server error ({resp.status_code}) — try again later"}
+                    conn.close(); return
+                if resp.status_code != 200:
+                    yield {"done": True, "success": False,
+                                      "status": f"NVD API error: HTTP {resp.status_code}"}
+                    conn.close(); return
+
+                data          = resp.json()
+                total_results = data.get("totalResults", 0)
+                vulnerabilities = data.get("vulnerabilities", [])
+
+                if total_results == 0:
+                    yield {"log": f"No CVEs found for {pass_label}.", "progress": 99}
+                    break
+
+                yield {"log": f"Total: {total_results:,} | Batch: {len(vulnerabilities)}"}
+
+                for item in vulnerabilities:
+                    cve_data = item.get("cve", {})
+                    cve_id   = cve_data.get("id", "")
+                    if not cve_id:
+                        continue
+
+                    descs = cve_data.get("descriptions", [])
+                    desc  = next((d["value"] for d in descs if d.get("lang") == "en"), "")
+
+                    metrics  = cve_data.get("metrics", {})
+                    cvss     = None
+                    severity = None
+                    for key in ["cvssMetricV40","cvssMetricV31","cvssMetricV30","cvssMetricV2"]:
+                        if key in metrics and metrics[key]:
+                            try:
+                                entry    = metrics[key][0]
+                                cvss     = float(entry["cvssData"]["baseScore"])
+                                severity = (entry["cvssData"].get("baseSeverity")
+                                            or entry.get("baseSeverity", ""))
+                            except Exception:
+                                pass
+                            break
+                    if not severity and cvss is not None:
+                        if   cvss >= 9.0: severity = "Critical"
+                        elif cvss >= 7.0: severity = "High"
+                        elif cvss >= 4.0: severity = "Medium"
+                        else:             severity = "Low"
+                    severity = (severity or "Unknown").capitalize()
+
+                    published     = cve_data.get("published", "")[:10]
+                    last_modified = cve_data.get("lastModified", "")[:10]
+
+                    cwe_id = ""
+                    for w in cve_data.get("weaknesses", []):
+                        for d in w.get("description", []):
+                            if d.get("lang") == "en":
+                                cwe_id = d.get("value", ""); break
+
+                    refs = [r.get("url","") for r in cve_data.get("references", [])[:10]]
+
+                    affected_versions = ""
+                    try:
+                        ver_parts = []
+                        for cfg in cve_data.get("configurations", []):
+                            for node in cfg.get("nodes", []):
+                                for m in node.get("cpeMatch", []):
+                                    if not m.get("vulnerable"): continue
+                                    ve  = m.get("versionEndExcluding", "")
+                                    vei = m.get("versionEndIncluding", "")
+                                    vi  = m.get("versionStartIncluding", "")
+                                    if ve:    ver_parts.append(f"< {ve}")
+                                    elif vei: ver_parts.append(f"<= {vei}")
+                                    elif vi:  ver_parts.append(f">= {vi}")
+                        if ver_parts:
+                            seen, unique = set(), []
+                            for v in ver_parts:
+                                if v not in seen: seen.add(v); unique.append(v)
+                            affected_versions = ", ".join(unique[:5])
+                    except Exception:
+                        pass
+
+                    cursor.execute("SELECT cve_id FROM cves WHERE cve_id = ?", (cve_id,))
+                    if cursor.fetchone():
+                        cursor.execute("""
+                            UPDATE cves SET description=?, cvss_score=?, severity=?,
+                            published=?, last_modified=?, cwe_id=?,
+                            "references"=?, affected_versions=? WHERE cve_id=?
+                        """, (desc, cvss, severity, published, last_modified, cwe_id,
+                              json.dumps(refs), affected_versions, cve_id))
+                        updated += 1
+                    else:
+                        cursor.execute("""
+                            INSERT INTO cves
+                              (cve_id, description, cvss_score, severity, published,
+                               last_modified, cwe_id, "references", affected_versions)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (cve_id, desc, cvss, severity, published, last_modified,
+                              cwe_id, json.dumps(refs), affected_versions))
+                        added += 1
+
+                conn.commit()
+                start_index += results_per
+                if start_index >= total_results:
+                    break
+                time.sleep(0.7 if NVD_API_KEY else 6)
+
+            except Exception as e:
+                yield {"log": f"Fetch error: {e}", "progress": 50}
+                time.sleep(5)
+                continue
+
+
+    conn.close()
+    yield {
+        "done":    True,
+        "success": True,
+        "progress": 100,
+        "status":  f"Done — {added:,} added, {updated:,} updated, from last {DB_UPDATE_DAYS} days",
+        "log":     f"✅ Added: {added}  Updated: {updated}  Total processed: {added + updated}",
+    }
+
+
 @app.route("/admin/update-db", methods=["POST"])
 @admin_required
 def update_db():
-    """
-    Stream CVE updates from NVD for the last DB_UPDATE_DAYS days.
-    Uses NVD API 2.0. Streams JSON progress lines to the browser.
-    """
-    from datetime import datetime, timedelta
-
+    """Streams _stream_nvd_update()'s progress to the browser as NDJSON,
+    then persists last_update on success."""
     def generate():
-        from datetime import timezone
-
-        now      = datetime.now(timezone.utc)
-        pub_from = (now - timedelta(days=DB_UPDATE_DAYS)).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
-        mod_from = (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
-        date_to  = now.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
-
-        headers = {"User-Agent": "CVE-Dashboard/1.0"}
-        if NVD_API_KEY:
-            headers["apiKey"] = NVD_API_KEY
-
-        results_per  = 2000
-        added = updated = skipped = 0
-
-        conn   = sqlite3.connect(DB)
-        cursor = conn.cursor()
-
-        # Ensure cves table has all needed columns
-        try:
-            cursor.execute("PRAGMA table_info(cves)")
-            existing_cols = {row[1] for row in cursor.fetchall()}
-            for col in ['cve_id','description','cvss_score','severity','published',
-                        'last_modified','references','cwe_id','affected_versions',
-                        'source','is_kev','kev_date_added','kev_ransomware']:
-                if col not in existing_cols:
-                    col_name = '"references"' if col == 'references' else col
-                    cursor.execute(f"ALTER TABLE cves ADD COLUMN {col_name} TEXT")
-            conn.commit()
-        except Exception as e:
-            yield json.dumps({"log": f"Schema check warning: {e}"}) + "\n"
-
-        # TWO-PASS: Pass 1 = new CVEs (pubDate), Pass 2 = updated CVEs (lastModDate)
-        fetch_passes = [
-            ("pubStartDate",     "pubEndDate",     pub_from, date_to, "new CVEs"),
-            ("lastModStartDate", "lastModEndDate", mod_from, date_to, "recently modified CVEs"),
-        ]
-
-        for pass_start_key, pass_end_key, pass_from_dt, pass_to_dt, pass_label in fetch_passes:
-            yield json.dumps({"log": f"Starting pass: {pass_label}…", "progress": 5}) + "\n"
-            start_index   = 0
-            total_results = None
-
-            while True:
-                params = {
-                    pass_start_key:  pass_from_dt,
-                    pass_end_key:    pass_to_dt,
-                    "startIndex":     start_index,
-                    "resultsPerPage": results_per,
-                }
-
-                yield json.dumps({
-                    "status":   f"Fetching records {start_index + 1}\u20132000...",
-                    "progress": min(10 + int((start_index / max(total_results or 1, 1)) * 85), 94),
-                }) + "\n"
-
-                try:
-                    resp = requests.get(NVD_API_URL, params=params, headers=headers, timeout=60)
-                    if resp.status_code == 403:
-                        yield json.dumps({"done": True, "success": False,
-                                          "status": "NVD API rate limit. Add NVD_API_KEY env var."}) + "\n"
-                        conn.close(); return
-
-                    if resp.status_code in (503, 429, 500, 502, 504):
-                        _s = getattr(update_db, "_retry_5xx", 0) + 1
-                        update_db._retry_5xx = _s
-                        if _s <= 5:
-                            wait = min(30 * _s, 120)
-                            yield json.dumps({"log": f"NVD HTTP {resp.status_code} — server busy, retrying in {wait}s (attempt {_s}/5)..."}) + "\n"
-                            time.sleep(wait)
-                            continue
-                        update_db._retry_5xx = 0
-                        yield json.dumps({"done": True, "success": False,
-                                          "status": f"NVD server error ({resp.status_code}) — try again later"}) + "\n"
-                        conn.close(); return
-                    if resp.status_code != 200:
-                        yield json.dumps({"done": True, "success": False,
-                                          "status": f"NVD API error: HTTP {resp.status_code}"}) + "\n"
-                        conn.close(); return
-
-                    data          = resp.json()
-                    total_results = data.get("totalResults", 0)
-                    vulnerabilities = data.get("vulnerabilities", [])
-
-                    if total_results == 0:
-                        yield json.dumps({"log": f"No CVEs found for {pass_label}.", "progress": 99}) + "\n"
-                        break
-
-                    yield json.dumps({"log": f"Total: {total_results:,} | Batch: {len(vulnerabilities)}"}) + "\n"
-
-                    for item in vulnerabilities:
-                        cve_data = item.get("cve", {})
-                        cve_id   = cve_data.get("id", "")
-                        if not cve_id:
-                            continue
-
-                        descs = cve_data.get("descriptions", [])
-                        desc  = next((d["value"] for d in descs if d.get("lang") == "en"), "")
-
-                        metrics  = cve_data.get("metrics", {})
-                        cvss     = None
-                        severity = None
-                        for key in ["cvssMetricV40","cvssMetricV31","cvssMetricV30","cvssMetricV2"]:
-                            if key in metrics and metrics[key]:
-                                try:
-                                    entry    = metrics[key][0]
-                                    cvss     = float(entry["cvssData"]["baseScore"])
-                                    severity = (entry["cvssData"].get("baseSeverity")
-                                                or entry.get("baseSeverity", ""))
-                                except Exception:
-                                    pass
-                                break
-                        if not severity and cvss is not None:
-                            if   cvss >= 9.0: severity = "Critical"
-                            elif cvss >= 7.0: severity = "High"
-                            elif cvss >= 4.0: severity = "Medium"
-                            else:             severity = "Low"
-                        severity = (severity or "Unknown").capitalize()
-
-                        published     = cve_data.get("published", "")[:10]
-                        last_modified = cve_data.get("lastModified", "")[:10]
-
-                        cwe_id = ""
-                        for w in cve_data.get("weaknesses", []):
-                            for d in w.get("description", []):
-                                if d.get("lang") == "en":
-                                    cwe_id = d.get("value", ""); break
-
-                        refs = [r.get("url","") for r in cve_data.get("references", [])[:10]]
-
-                        affected_versions = ""
-                        try:
-                            ver_parts = []
-                            for cfg in cve_data.get("configurations", []):
-                                for node in cfg.get("nodes", []):
-                                    for m in node.get("cpeMatch", []):
-                                        if not m.get("vulnerable"): continue
-                                        ve  = m.get("versionEndExcluding", "")
-                                        vei = m.get("versionEndIncluding", "")
-                                        vi  = m.get("versionStartIncluding", "")
-                                        if ve:    ver_parts.append(f"< {ve}")
-                                        elif vei: ver_parts.append(f"<= {vei}")
-                                        elif vi:  ver_parts.append(f">= {vi}")
-                            if ver_parts:
-                                seen, unique = set(), []
-                                for v in ver_parts:
-                                    if v not in seen: seen.add(v); unique.append(v)
-                                affected_versions = ", ".join(unique[:5])
-                        except Exception:
-                            pass
-
-                        cursor.execute("SELECT cve_id FROM cves WHERE cve_id = ?", (cve_id,))
-                        if cursor.fetchone():
-                            cursor.execute("""
-                                UPDATE cves SET description=?, cvss_score=?, severity=?,
-                                published=?, last_modified=?, cwe_id=?,
-                                "references"=?, affected_versions=? WHERE cve_id=?
-                            """, (desc, cvss, severity, published, last_modified, cwe_id,
-                                  json.dumps(refs), affected_versions, cve_id))
-                            updated += 1
-                        else:
-                            cursor.execute("""
-                                INSERT INTO cves
-                                  (cve_id, description, cvss_score, severity, published,
-                                   last_modified, cwe_id, "references", affected_versions)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (cve_id, desc, cvss, severity, published, last_modified,
-                                  cwe_id, json.dumps(refs), affected_versions))
-                            added += 1
-
-                    conn.commit()
-                    start_index += results_per
-                    if start_index >= total_results:
-                        break
-                    time.sleep(0.7 if NVD_API_KEY else 6)
-
-                except Exception as e:
-                    yield json.dumps({"log": f"Fetch error: {e}", "progress": 50}) + "\n"
-                    time.sleep(5)
-                    continue
-
-
-        conn.close()
-        yield json.dumps({
-            "done":    True,
-            "success": True,
-            "progress": 100,
-            "status":  f"Done — {added:,} added, {updated:,} updated, from last {DB_UPDATE_DAYS} days",
-            "log":     f"✅ Added: {added}  Updated: {updated}  Total processed: {added + updated}",
-        }) + "\n"
+        success = False
+        for evt in _stream_nvd_update():
+            if evt.get("done"):
+                success = bool(evt.get("success"))
+            yield json.dumps(evt) + "\n"
+        if success:
+            _set_last_update()
+            _build_stats_cache()
 
     return Response(generate(), mimetype="application/x-ndjson")
+
+
+# ============================================================
+# SCHEDULED AUTO-UPDATE (daily/weekly, matches the dashboard banner)
+# ============================================================
+
+_NVD_UPDATE_FREQUENCY = os.environ.get("NVD_UPDATE_FREQUENCY", "daily").strip().lower()  # "daily" or "weekly"
+
+def _nvd_scheduled_job():
+    from datetime import datetime, timezone
+    print(f"⏰ [scheduler] Starting {_NVD_UPDATE_FREQUENCY} NVD update — {datetime.now(timezone.utc).isoformat()}")
+    success = False
+    try:
+        for evt in _stream_nvd_update():
+            if evt.get("log"):
+                print(f"   [scheduler] {evt['log']}")
+            if evt.get("done"):
+                success = bool(evt.get("success"))
+                print(f"   [scheduler] {evt.get('status', '')}")
+    except Exception as e:
+        print(f"⚠️ [scheduler] NVD update crashed: {e}")
+    if success:
+        _set_last_update()
+        _build_stats_cache()
+    print(f"⏰ [scheduler] Finished — success={success}")
+
+def _run_scheduler_loop():
+    if _NVD_UPDATE_FREQUENCY == "weekly":
+        schedule.every().monday.at("02:00", "UTC").do(_nvd_scheduled_job)
+        print("⏰ [scheduler] NVD auto-update scheduled: weekly (Mondays 02:00 UTC)")
+    else:
+        schedule.every().day.at("02:00", "UTC").do(_nvd_scheduled_job)
+        print("⏰ [scheduler] NVD auto-update scheduled: daily (02:00 UTC)")
+    while True:
+        try:
+            schedule.run_pending()
+        except Exception as e:
+            print(f"⚠️ [scheduler] loop error: {e}")
+        time.sleep(30)
+
+threading.Thread(target=_run_scheduler_loop, daemon=True).start()
 
 
 @app.route("/admin/upload-db", methods=["POST"])
