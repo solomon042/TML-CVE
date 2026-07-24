@@ -3133,14 +3133,14 @@ def update_db():
     """Streams _stream_nvd_update()'s progress to the browser as NDJSON,
     then persists last_update on success."""
     def generate():
-        success = False
         for evt in _stream_nvd_update():
-            if evt.get("done"):
-                success = bool(evt.get("success"))
+            if evt.get("done") and evt.get("success"):
+                # Must run before yielding the final chunk — if the browser
+                # stops reading the stream right after "done", Werkzeug closes
+                # this generator (GeneratorExit) and code after the loop never runs.
+                _set_last_update()
+                _build_stats_cache()
             yield json.dumps(evt) + "\n"
-        if success:
-            _set_last_update()
-            _build_stats_cache()
 
     return Response(generate(), mimetype="application/x-ndjson")
 
