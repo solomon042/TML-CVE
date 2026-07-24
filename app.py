@@ -177,9 +177,12 @@ def _migrate_severity_bg():
         except Exception:
             pass  # Column already exists — that's fine
 
-        # Count rows needing update
+        # Count rows needing update. Note: 'Unknown' is a legitimate terminal
+        # value (CVE has no CVSS score) — it must NOT be treated as
+        # "still needs work", or this loop never converges (CVEs without a
+        # score always re-match, holding the SQLite write lock forever).
         _cur.execute(
-            "SELECT COUNT(*) FROM cves WHERE severity IS NULL OR severity='' OR severity='Unknown'"
+            "SELECT COUNT(*) FROM cves WHERE severity IS NULL OR severity=''"
         )
         _need = _cur.fetchone()[0]
         if _need == 0:
@@ -202,7 +205,7 @@ def _migrate_severity_bg():
                     END
                 WHERE rowid IN (
                     SELECT rowid FROM cves
-                    WHERE severity IS NULL OR severity='' OR severity='Unknown'
+                    WHERE severity IS NULL OR severity=''
                     LIMIT 10000
                 )
             """)
@@ -394,7 +397,7 @@ USE_AI_CACHE = True   # True=reuse DB results | False=always call fresh
 # NVD Update config
 NVD_API_URL      = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 NVD_API_KEY      = os.environ.get("NVD_API_KEY", "")   # optional, raises rate limit
-DB_UPDATE_DAYS   = 180    # how many days back to fetch on update
+DB_UPDATE_DAYS   = 120    # how many days back to fetch on update (NVD API 2.0 hard-caps date-range queries at 120 days)
 
 # Global variable for date column
 DATE_COLUMN = "published"
@@ -586,7 +589,7 @@ def init_database():
                     WHEN CAST(cvss_score AS REAL) >  0   THEN 'Low'
                     ELSE 'Unknown'
                 END
-            WHERE severity IS NULL OR severity = '' OR severity = 'Unknown'
+            WHERE severity IS NULL OR severity = ''
         """)
         populated = cursor.rowcount
         if populated:
@@ -3152,21 +3155,25 @@ def update_db():
 _NVD_UPDATE_FREQUENCY = os.environ.get("NVD_UPDATE_FREQUENCY", "daily").strip().lower()  # "daily" or "weekly"
 
 def _nvd_scheduled_job():
+    """Runs the same _run_nvd_update() the 'Update DB' button/webhook use,
+    so scheduled runs get identical behavior (NVD + CISA KEV + MITRE,
+    last_update persisted on success)."""
     from datetime import datetime, timezone
+    with _nvd_lock:
+        if _nvd_job.get("running"):
+            print("⏰ [scheduler] Skipped — an NVD update is already running")
+            return
+        _nvd_job.update({"running": True, "progress": 0, "status": "Starting (scheduled)...",
+                          "log": [], "success": None, "done": False})
     print(f"⏰ [scheduler] Starting {_NVD_UPDATE_FREQUENCY} NVD update — {datetime.now(timezone.utc).isoformat()}")
-    success = False
     try:
-        for evt in _stream_nvd_update():
-            if evt.get("log"):
-                print(f"   [scheduler] {evt['log']}")
-            if evt.get("done"):
-                success = bool(evt.get("success"))
-                print(f"   [scheduler] {evt.get('status', '')}")
+        _run_nvd_update(NVD_API_KEY)
     except Exception as e:
         print(f"⚠️ [scheduler] NVD update crashed: {e}")
-    if success:
-        _set_last_update()
-        _build_stats_cache()
+        with _nvd_lock:
+            _nvd_job.update({"done": True, "success": False, "running": False, "status": str(e)})
+    with _nvd_lock:
+        success = _nvd_job.get("success")
     print(f"⏰ [scheduler] Finished — success={success}")
 
 def _run_scheduler_loop():
@@ -3672,6 +3679,7 @@ def _run_nvd_update(user_key):
         except Exception as e:
             _log(f"MITRE skipped: {e}")
 
+        _set_last_update()
         _build_stats_cache()
         msg = (f"Done — NVD: {added:,} added/{updated:,} updated | "
                f"MITRE+KEV also fetched")
