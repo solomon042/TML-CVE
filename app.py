@@ -243,7 +243,7 @@ if not _secret:
 app.config['SECRET_KEY'] = _secret
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE']   = _IS_PRODUCTION  # HTTPS only in production
+app.config['SESSION_COOKIE_SECURE']   = True  # always served over HTTPS (Koyeb + Cloudflare terminate TLS)
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=8)
 
 ALLOWED_EXTENSIONS = {'txt', 'csv', 'json', 'xml', 'xlsx', 'xls'}
@@ -304,6 +304,11 @@ def add_security_headers(response):
     response.headers['X-Frame-Options'] = 'SAMEORIGIN'
     response.headers['X-XSS-Protection'] = '1; mode=block'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    response.headers['Permissions-Policy'] = (
+        'geolocation=(), microphone=(), camera=(), payment=(), usb=(), '
+        'magnetometer=(), gyroscope=(), interest-cohort=()'
+    )
     # Skip CSP for NVD update page and its API endpoints — XHR needs full access
     skip_csp = request.path in ('/update-cve', '/api/nvd-update', '/api/nvd-status')
     if not skip_csp:
