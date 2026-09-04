@@ -1,4 +1,5 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file, session, Response, abort
+from markupsafe import escape
 import sqlite3
 import os
 import pandas as pd
@@ -365,6 +366,33 @@ def generate_csrf_token() -> str:
 def validate_csrf(token: str) -> bool:
     from flask import session as fs
     return secrets.compare_digest(fs.get("csrf_token", ""), token or "")
+
+def _csrf_token_from_request() -> str:
+    """Pull the CSRF token from wherever the caller put it: form field, JSON body, or header."""
+    token = request.form.get("csrf_token")
+    if not token and request.is_json:
+        token = (request.get_json(silent=True) or {}).get("csrf_token")
+    if not token:
+        token = request.headers.get("X-CSRF-Token")
+    return token
+
+def require_csrf(f):
+    """Decorator: reject state-changing requests that don't carry a valid session CSRF token."""
+    from functools import wraps
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not validate_csrf(_csrf_token_from_request()):
+            if request.is_json or request.path.startswith("/api/"):
+                return jsonify({"ok": False, "message": "Invalid or missing CSRF token — refresh the page and try again."}), 403
+            abort(403)
+        return f(*args, **kwargs)
+    return decorated
+
+def _safe_next(url: str, default: str = "/") -> str:
+    """Only allow same-site relative redirect targets — blocks open-redirect via ?next=."""
+    if not url or not url.startswith("/") or url.startswith("//") or url.startswith("/\\"):
+        return default
+    return url
 
 # Make csrf token available in all templates
 @app.context_processor
@@ -1837,6 +1865,17 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated
 
+def admin_required(f):
+    """Decorator: redirect to /admin/login if not authenticated."""
+    from functools import wraps
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        from flask import session as fs
+        if not fs.get("admin_logged_in"):
+            return redirect(url_for("admin_login", next=request.path))
+        return f(*args, **kwargs)
+    return decorated
+
 def get_user_ai_config():
     """Get AI config for current user — falls back to session then env defaults."""
     from flask import session as fs
@@ -1879,6 +1918,7 @@ def do_update_db():
     return redirect(url_for("admin_login", next="/update-cve"))
 
 @app.route("/search", methods=["POST"])
+@require_csrf
 def search_post():
     """POST-based search so keywords don't appear in URL."""
     keyword         = request.form.get("keyword", "").strip()
@@ -1963,6 +2003,7 @@ def index():
 
 
 @app.route("/upload-bom", methods=["POST"])
+@require_csrf
 def upload_bom():
     if 'bom_file' not in request.files:
         return redirect(url_for('index', error='No file uploaded'))
@@ -1988,6 +2029,7 @@ def upload_bom():
 
 
 @app.route("/multi-keyword", methods=["POST"])
+@require_csrf
 def multi_keyword():
     keywords_text   = request.form.get("keywords", "")
     severity_filter = request.form.get("severity_multi", "")
@@ -2132,6 +2174,7 @@ def stats():
 
 
 @app.route("/api/ai-analyze", methods=["POST"])
+@require_csrf
 def api_ai_analyze():
     """Lazy AI endpoint — called by frontend after page renders."""
     data = request.get_json()
@@ -2271,6 +2314,7 @@ def regenerate_ai(cve_id):
 
 
 @app.route("/admin/clear-all-cache")
+@admin_required
 def clear_all_cache():
     """Clear stale/placeholder AI records only. Valid analysis preserved."""
     conn   = sqlite3.connect(DB)
@@ -2293,6 +2337,7 @@ def clear_all_cache():
 
 
 @app.route("/admin/clear-all-ai")
+@admin_required
 def clear_all_ai():
     """
     WIPE ALL stored AI analysis and cache.
@@ -2320,12 +2365,14 @@ def clear_all_ai():
 # ── DEBUG / TEST ──────────────────────────────────────────────
 
 @app.route("/test-ai")
+@admin_required
 def test_ai():
     resp = call_deepseek("Say Hello", max_tokens=10)
     return f"✅ DeepSeek working: {resp}" if resp else "❌ DeepSeek not working."
 
 
 @app.route("/debug/ai/<cve_id>")
+@admin_required
 def debug_ai(cve_id):
     conn   = sqlite3.connect(DB)
     cursor = conn.cursor()
@@ -2340,6 +2387,7 @@ def debug_ai(cve_id):
 
 
 @app.route("/test-cve/<cve_id>")
+@admin_required
 def test_cve(cve_id):
     conn   = get_db_connection()
     cursor = conn.cursor()
@@ -2379,6 +2427,7 @@ def settings():
     masked_key = (current_key[:6] + "..." + current_key[-4:]) if len(current_key) > 12 else ("*" * len(current_key))
 
     providers_json = json.dumps(PROVIDER_INFO)
+    csrf_token = generate_csrf_token()
 
     return f"""<!DOCTYPE html>
 <html>
@@ -2540,7 +2589,7 @@ async function saveSettings() {{
     const r = await fetch('/settings/save', {{
       method: 'POST',
       headers: {{'Content-Type': 'application/json'}},
-      body: JSON.stringify({{provider, api_key, model}})
+      body: JSON.stringify({{provider, api_key, model, csrf_token: '{csrf_token}'}})
     }});
     const d = await r.json();
     res.style.display = 'block';
@@ -2562,7 +2611,7 @@ async function saveSettings() {{
 }}
 
 async function clearSettings() {{
-  await fetch('/settings/clear', {{method:'POST'}});
+  await fetch('/settings/clear', {{method:'POST', headers:{{'X-CSRF-Token':'{csrf_token}'}}}});
   window.location.reload();
 }}
 
@@ -2573,6 +2622,7 @@ renderProviders();
 
 
 @app.route("/settings/save", methods=["POST"])
+@require_csrf
 def settings_save():
     from flask import session as fs
     data     = request.get_json()
@@ -2658,6 +2708,7 @@ def settings_save():
 
 
 @app.route("/settings/clear", methods=["POST"])
+@require_csrf
 def settings_clear():
     from flask import session as fs
     fs.pop("ai_provider", None)
@@ -2670,28 +2721,20 @@ def settings_clear():
 # ADMIN LOGIN + DB UPDATER
 # ============================================================
 
-def admin_required(f):
-    """Decorator: redirect to /admin/login if not authenticated."""
-    from functools import wraps
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        from flask import session as fs
-        if not fs.get("admin_logged_in"):
-            return redirect(url_for("admin_login", next=request.path))
-        return f(*args, **kwargs)
-    return decorated
-
-
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
     from flask import session as fs
     error = ""
     if request.method == "POST":
-        if (request.form.get("username") == ADMIN_USERNAME and
-                request.form.get("password") == ADMIN_PASSWORD):
+        if not validate_csrf(request.form.get("csrf_token")):
+            error = "Session expired — please try again."
+        elif (secrets.compare_digest(request.form.get("username", ""), ADMIN_USERNAME) and
+                secrets.compare_digest(request.form.get("password", ""), ADMIN_PASSWORD)):
             fs["admin_logged_in"] = True
-            return redirect(request.args.get("next") or url_for("admin_panel"))
-        error = "Invalid credentials"
+            return redirect(_safe_next(request.args.get("next"), url_for("admin_panel")))
+        else:
+            error = "Invalid credentials"
+    csrf_token = generate_csrf_token()
 
     return f"""<!DOCTYPE html>
 <html>
@@ -2718,6 +2761,7 @@ def admin_login():
     </div>
     {'<div class="alert alert-danger py-2 text-center" style="font-size:.85rem">' + error + '</div>' if error else ''}
     <form method="POST">
+      <input type="hidden" name="csrf_token" value="{csrf_token}">
       <div class="mb-3">
         <label>Username</label>
         <input type="text" name="username" class="form-control mt-1" autofocus>
@@ -2755,6 +2799,7 @@ def admin_panel():
     except Exception:
         oldest, newest = "?", "?"
     conn.close()
+    csrf_token = generate_csrf_token()
 
     return f"""<!DOCTYPE html>
 <html>
@@ -2885,6 +2930,7 @@ async function uploadDb(input) {{
   stat.textContent = 'Uploading ' + file.name + '...';
   const fd = new FormData();
   fd.append('db_file', file);
+  fd.append('csrf_token', '{csrf_token}');
   try {{
     const r = await fetch('/admin/upload-db', {{method:'POST', body:fd}});
     const d = await r.json();
@@ -3200,6 +3246,7 @@ threading.Thread(target=_run_scheduler_loop, daemon=True).start()
 
 @app.route("/admin/upload-db", methods=["POST"])
 @admin_required
+@require_csrf
 def upload_db_file():
     """Upload a .db file to replace/merge into the current database."""
     if 'db_file' not in request.files:
@@ -3703,6 +3750,12 @@ def _run_nvd_update(user_key):
 def api_nvd_update():
     """Start NVD update in background thread, return job ID."""
     global _nvd_job
+    # Same gate as /update-cve: require admin login in production so this
+    # expensive, rate-limited job can't be triggered by unauthenticated callers.
+    if _IS_PRODUCTION:
+        from flask import session as fs
+        if not fs.get("admin_logged_in"):
+            return jsonify({"ok": False, "message": "Admin login required"}), 403
     with _nvd_lock:
         if _nvd_job.get("running"):
             return jsonify({"ok": False, "message": "Update already running"}), 409
@@ -3799,7 +3852,7 @@ def webhook_update_db():
     if not secret:
         return jsonify({"error": "WEBHOOK_SECRET not configured"}), 500
     token = request.args.get("token", "")
-    if not token or token != secret:
+    if not token or not secrets.compare_digest(token, secret):
         return jsonify({"error": "Invalid token"}), 403
 
     # Check if update already running
@@ -3826,32 +3879,37 @@ def webhook_update_db():
 def user_register():
     error = ""
     if request.method == "POST":
-        username = request.form.get("username","").strip()
-        email    = request.form.get("email","").strip().lower()
-        password = request.form.get("password","").strip()
-        confirm  = request.form.get("confirm","").strip()
-
-        if not all([username, email, password]):
-            error = "All fields are required."
-        elif password != confirm:
-            error = "Passwords do not match."
-        elif len(password) < 8:
-            error = "Password must be at least 8 characters."
+        if not validate_csrf(request.form.get("csrf_token")):
+            error = "Session expired — please try again."
         else:
-            try:
-                conn = sqlite3.connect(DB)
-                cur  = conn.cursor()
-                cur.execute("""
-                    INSERT INTO users (username, email, password_hash, role, approved)
-                    VALUES (?,?,?,'user',0)
-                """, (username, email, generate_password_hash(password)))
-                conn.commit()
-                conn.close()
-                return redirect(url_for("pending_approval"))
-            except sqlite3.IntegrityError:
-                error = "Username or email already registered."
-            except Exception as e:
-                error = f"Registration failed: {e}"
+            username = request.form.get("username","").strip()
+            email    = request.form.get("email","").strip().lower()
+            password = request.form.get("password","").strip()
+            confirm  = request.form.get("confirm","").strip()
+
+            if not all([username, email, password]):
+                error = "All fields are required."
+            elif not re.match(r'^[A-Za-z0-9_.-]{3,32}$', username):
+                error = "Username must be 3-32 characters: letters, numbers, . _ - only."
+            elif password != confirm:
+                error = "Passwords do not match."
+            elif len(password) < 8:
+                error = "Password must be at least 8 characters."
+            else:
+                try:
+                    conn = sqlite3.connect(DB)
+                    cur  = conn.cursor()
+                    cur.execute("""
+                        INSERT INTO users (username, email, password_hash, role, approved)
+                        VALUES (?,?,?,'user',0)
+                    """, (username, email, generate_password_hash(password)))
+                    conn.commit()
+                    conn.close()
+                    return redirect(url_for("pending_approval"))
+                except sqlite3.IntegrityError:
+                    error = "Username or email already registered."
+                except Exception:
+                    error = "Registration failed — please try again."
 
     return f"""<!DOCTYPE html>
 <html><head><title>Register — CVE Dashboard</title>
@@ -3870,6 +3928,7 @@ label{{color:#94a3b8;font-size:.85rem;}} h4{{color:#e2e8f0;}}
   </div>
   {'<div class="alert alert-danger py-2">' + error + '</div>' if error else ''}
   <form method="POST">
+    <input type="hidden" name="csrf_token" value="{generate_csrf_token()}">
     <div class="mb-3">
       <label>Username</label>
       <input type="text" name="username" class="form-control mt-1" required autofocus>
@@ -3901,35 +3960,37 @@ def user_login():
     from flask import session as fs
     error = ""
     if request.method == "POST":
-        username = request.form.get("username","").strip()
-        password = request.form.get("password","").strip()
-        try:
-            conn = sqlite3.connect(DB)
-            cur  = conn.cursor()
-            cur.execute("""
-                SELECT id,username,email,role,approved,password_hash
-                FROM users WHERE username=? OR email=?
-            """, (username, username.lower()))
-            row = cur.fetchone()
-            if row and check_password_hash(row[5], password):
-                if not row[4]:  # not approved
+        if not validate_csrf(request.form.get("csrf_token")):
+            error = "Session expired — please try again."
+        else:
+            username = request.form.get("username","").strip()
+            password = request.form.get("password","").strip()
+            try:
+                conn = sqlite3.connect(DB)
+                cur  = conn.cursor()
+                cur.execute("""
+                    SELECT id,username,email,role,approved,password_hash
+                    FROM users WHERE username=? OR email=?
+                """, (username, username.lower()))
+                row = cur.fetchone()
+                if row and check_password_hash(row[5], password):
+                    if not row[4]:  # not approved
+                        conn.close()
+                        return redirect(url_for("pending_approval"))
+                    fs["user_id"]       = row[0]
+                    fs["user_username"] = row[1]
+                    fs["user_role"]     = row[3]
+                    # Log login
+                    conn.execute("UPDATE users SET last_login=CURRENT_TIMESTAMP WHERE id=?", (row[0],))
+                    conn.execute("INSERT INTO user_sessions (user_id,event,ip_address) VALUES (?,'login',?)",
+                                 (row[0], request.remote_addr))
+                    conn.commit()
                     conn.close()
-                    return redirect(url_for("pending_approval"))
-                fs["user_id"]       = row[0]
-                fs["user_username"] = row[1]
-                fs["user_role"]     = row[3]
-                # Log login
-                conn.execute("UPDATE users SET last_login=CURRENT_TIMESTAMP WHERE id=?", (row[0],))
-                conn.execute("INSERT INTO user_sessions (user_id,event,ip_address) VALUES (?,'login',?)",
-                             (row[0], request.remote_addr))
-                conn.commit()
+                    return redirect(_safe_next(request.args.get("next")))
                 conn.close()
-                next_url = request.args.get("next", "/")
-                return redirect(next_url)
-            conn.close()
-            error = "Invalid username or password."
-        except Exception as e:
-            error = f"Login error: {e}"
+                error = "Invalid username or password."
+            except Exception:
+                error = "Login failed — please try again."
 
     return f"""<!DOCTYPE html>
 <html><head><title>Login — CVE Dashboard</title>
@@ -3948,6 +4009,7 @@ label{{color:#94a3b8;font-size:.85rem;}} h4{{color:#e2e8f0;}}
   </div>
   {'<div class="alert alert-danger py-2">' + error + '</div>' if error else ''}
   <form method="POST">
+    <input type="hidden" name="csrf_token" value="{generate_csrf_token()}">
     <div class="mb-3">
       <label>Username or Email</label>
       <input type="text" name="username" class="form-control mt-1" required autofocus>
@@ -4042,6 +4104,7 @@ def user_profile():
     usage_rows = "".join(
         f"<tr><td>{r[1]}</td><td>{r[0]} AI calls</td></tr>" for r in usage
     ) or "<tr><td colspan=2 class='text-muted'>No usage yet</td></tr>"
+    csrf_token = generate_csrf_token()
 
     return f"""<!DOCTYPE html>
 <html><head><title>My Profile — CVE Dashboard</title>
@@ -4058,9 +4121,9 @@ def user_profile():
 
   <div class="card border-0 shadow-sm rounded-3 p-4 mb-4">
     <h6 class="text-muted mb-3 text-uppercase" style="font-size:.75rem;letter-spacing:.5px">Account Info</h6>
-    <p class="mb-1"><b>Username:</b> {user["username"]}</p>
-    <p class="mb-1"><b>Email:</b> {user["email"]}</p>
-    <p class="mb-0"><b>Role:</b> <span class="badge {'bg-danger' if user['role']=='admin' else 'bg-primary'}">{user["role"]}</span></p>
+    <p class="mb-1"><b>Username:</b> {escape(user["username"])}</p>
+    <p class="mb-1"><b>Email:</b> {escape(user["email"])}</p>
+    <p class="mb-0"><b>Role:</b> <span class="badge {'bg-danger' if user['role']=='admin' else 'bg-primary'}">{escape(user["role"])}</span></p>
   </div>
 
   <div class="card border-0 shadow-sm rounded-3 p-4 mb-4">
@@ -4079,7 +4142,7 @@ def user_profile():
     <div class="mb-3">
       <label class="form-label">Model</label>
       <input type="text" class="form-control" id="modelInp"
-             placeholder="e.g. deepseek-chat" value="{saved_model}">
+             placeholder="e.g. deepseek-chat" value="{escape(saved_model)}">
     </div>
     <div class="mb-3">
       <label class="form-label">API Key {'<span class="badge bg-success">Saved</span>' if has_key else ''}</label>
@@ -4114,7 +4177,7 @@ async function saveKey() {{
   if (!api_key) {{ res.innerHTML='<div class="alert alert-warning py-2">Enter your API key first</div>'; return; }}
   const r = await fetch('/profile/save-key', {{
     method:'POST', headers:{{'Content-Type':'application/json'}},
-    body: JSON.stringify({{provider, model, api_key}})
+    body: JSON.stringify({{provider, model, api_key, csrf_token: '{csrf_token}'}})
   }});
   const d = await r.json();
   res.innerHTML = d.ok
@@ -4127,6 +4190,7 @@ async function saveKey() {{
 
 @app.route("/profile/save-key", methods=["POST"])
 @login_required
+@require_csrf
 def profile_save_key():
     user = get_current_user()
     data = request.get_json() or {}
@@ -4183,10 +4247,10 @@ def admin_users():
           <button class="btn btn-outline-danger btn-sm" onclick="manageUser({u[0]},'delete')">Delete</button>
         """
         rows += f"""<tr>
-          <td>{u[1]}</td><td style="font-size:.8rem">{u[2]}</td>
-          <td><span class="badge {'bg-danger' if u[3]=='admin' else 'bg-primary'}">{u[3]}</span></td>
+          <td>{escape(u[1])}</td><td style="font-size:.8rem">{escape(u[2])}</td>
+          <td><span class="badge {'bg-danger' if u[3]=='admin' else 'bg-primary'}">{escape(u[3])}</span></td>
           <td>{badge}</td>
-          <td style="font-size:.8rem">{u[7] or '—'} / {u[8] or '—'}</td>
+          <td style="font-size:.8rem">{escape(u[7]) if u[7] else '—'} / {escape(u[8]) if u[8] else '—'}</td>
           <td>{u[9]} logins</td>
           <td>{action}</td>
         </tr>"""
@@ -4221,7 +4285,9 @@ def admin_users():
 <script>
 async function manageUser(uid, action) {{
   if (!confirm(action + ' this user?')) return;
-  const r = await fetch('/admin/users/' + action + '/' + uid, {{method:'POST'}});
+  const r = await fetch('/admin/users/' + action + '/' + uid, {{
+    method:'POST', headers:{{'X-CSRF-Token':'{generate_csrf_token()}'}}
+  }});
   const d = await r.json();
   document.getElementById('result').innerHTML = d.ok
     ? '<div class="alert alert-success">' + d.message + '</div>'
@@ -4234,6 +4300,7 @@ async function manageUser(uid, action) {{
 
 @app.route("/admin/users/approve/<int:uid>", methods=["POST"])
 @admin_required
+@require_csrf
 def admin_approve_user(uid):
     try:
         conn = sqlite3.connect(DB)
@@ -4247,6 +4314,7 @@ def admin_approve_user(uid):
 
 @app.route("/admin/users/revoke/<int:uid>", methods=["POST"])
 @admin_required
+@require_csrf
 def admin_revoke_user(uid):
     try:
         conn = sqlite3.connect(DB)
@@ -4260,6 +4328,7 @@ def admin_revoke_user(uid):
 
 @app.route("/admin/users/delete/<int:uid>", methods=["POST"])
 @admin_required
+@require_csrf
 def admin_delete_user(uid):
     try:
         conn = sqlite3.connect(DB)
@@ -4275,6 +4344,7 @@ def admin_delete_user(uid):
 
 @app.route("/admin/users/make-admin/<int:uid>", methods=["POST"])
 @admin_required
+@require_csrf
 def admin_make_admin(uid):
     try:
         conn = sqlite3.connect(DB)

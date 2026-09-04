@@ -2026,7 +2026,7 @@ async function runLazyAI() {
             const r = await fetch('/api/ai-analyze', {
                 method:'POST', credentials:'include',
                 headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({cves: batch}),
+                body: JSON.stringify({cves: batch, csrf_token: '{{ csrf_token }}'}),
             });
             if (r.ok) {
                 const res = await r.json();
