@@ -407,7 +407,7 @@ def inject_csrf():
 # Users can change provider + API key at runtime via /settings page.
 # These are the SERVER-SIDE defaults (used when no session setting found).
 
-DEFAULT_AI_PROVIDER = "deepseek"   # default provider on first launch
+DEFAULT_AI_PROVIDER = "claude"   # default provider on first launch (override with AI_PROVIDER env)
 
 # DeepSeek
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
@@ -419,7 +419,7 @@ OPENAI_MODEL     = "gpt-4o-mini"    # cheapest capable model
 
 # Anthropic / Claude
 CLAUDE_API_URL   = "https://api.anthropic.com/v1/messages"
-CLAUDE_MODEL     = "claude-3-haiku-20240307"   # fast + affordable
+CLAUDE_MODEL     = "claude-sonnet-5"   # current-gen: strong quality, good cost (override with AI_MODEL env)
 
 # Ollama (local, no API key needed)
 OLLAMA_URL       = "http://localhost:11434/api/generate"
@@ -746,6 +746,21 @@ def _build_prompt_messages(system_prompt: str, user_prompt: str) -> list:
     ]
 
 
+def _claude_text(data: dict) -> str:
+    """Extract the first text block from a Claude Messages response.
+    Current-gen models (Sonnet 5, Opus 5, …) run adaptive thinking, so
+    content[0] may be a (possibly empty) thinking block — never assume
+    the text is at index 0."""
+    for block in data.get("content", []):
+        if block.get("type") == "text" and block.get("text"):
+            return block["text"].strip()
+    # fallback: first block that carries any text field
+    for block in data.get("content", []):
+        if block.get("text"):
+            return block["text"].strip()
+    return ""
+
+
 def call_ai_provider(prompt_text: str, max_tokens: int = 200,
                      provider: str = None, api_key: str = None,
                      model: str = None) -> str | None:
@@ -770,11 +785,14 @@ def call_ai_provider(prompt_text: str, max_tokens: int = 200,
             payload = {
                 "model":      model,
                 "max_tokens": max_tokens,
+                # Disable adaptive thinking (on by default in current-gen models)
+                # so the whole token budget goes to the answer and output is predictable.
+                "thinking":   {"type": "disabled"},
                 "messages":   [{"role": "user", "content": prompt_text}],
             }
             resp = requests.post(CLAUDE_API_URL, json=payload, headers=headers, timeout=30)
             if resp.status_code == 200:
-                return resp.json()["content"][0]["text"].strip()
+                return _claude_text(resp.json())
             print(f"Claude error {resp.status_code}: {resp.text[:200]}")
             return None
 
@@ -867,7 +885,8 @@ def call_ai_json(cve_id: str, description: str,
             }
             payload = {
                 "model":      model,
-                "max_tokens": 700,
+                "max_tokens": 1500,
+                "thinking":   {"type": "disabled"},
                 "system":     system_prompt,
                 "messages":   [{"role": "user", "content": user_prompt}],
             }
@@ -875,7 +894,7 @@ def call_ai_json(cve_id: str, description: str,
             if resp.status_code != 200:
                 print(f"Claude error {resp.status_code}: {resp.text[:200]}")
                 return None
-            raw = resp.json()["content"][0]["text"].strip()
+            raw = _claude_text(resp.json())
 
         else:
             # OpenAI-compatible (DeepSeek + OpenAI)
