@@ -19,6 +19,7 @@ import re
 import secrets
 import threading
 import schedule
+import bulletin as _bulletin_mod
 from datetime import timedelta
 
 # ── LOAD .env FILE (if present) ─────────────────────────────────────────
@@ -478,6 +479,21 @@ def get_ai_config():
     return provider, api_key, model
 
 
+def _server_ai_config():
+    """Env-only AI config for background jobs (scheduler / bulletin generator)
+    that run outside any Flask request/session context. Returns
+    (provider, api_key, model); api_key may be '' if none is configured."""
+    provider = os.environ.get("AI_PROVIDER", DEFAULT_AI_PROVIDER).lower()
+    if provider == "openai":
+        return "openai", os.environ.get("OPENAI_API_KEY", ""), os.environ.get("AI_MODEL") or OPENAI_MODEL
+    if provider == "claude":
+        return "claude", os.environ.get("ANTHROPIC_API_KEY", ""), os.environ.get("AI_MODEL") or CLAUDE_MODEL
+    if provider == "ollama":
+        return "ollama", "ollama", os.environ.get("AI_MODEL") or OLLAMA_MODEL
+    # default: deepseek
+    return "deepseek", os.environ.get("DEEPSEEK_API_KEY", ""), os.environ.get("AI_MODEL") or DEEPSEEK_MODEL
+
+
 PROVIDER_INFO = {
     "deepseek": {
         "name":        "DeepSeek",
@@ -585,6 +601,19 @@ def init_database():
         model TEXT,
         ip_hash TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # Monthly automotive vulnerability bulletins (cached, one row per month)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS bulletins (
+        month          TEXT PRIMARY KEY,   -- 'YYYY-MM' (the month the bulletin covers)
+        html           TEXT,               -- rendered standalone brochure
+        data_json      TEXT,               -- machine-readable payload (CVEs + incidents + stats)
+        cve_count      INTEGER DEFAULT 0,
+        incident_count INTEGER DEFAULT 0,
+        generated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        status         TEXT DEFAULT 'published'
     )
     """)
 
@@ -2908,6 +2937,9 @@ def admin_panel():
               onclick="adminAction('/admin/save-db-to-github','Save updated DB to GitHub Releases? (requires GITHUB_TOKEN)')">
         <i class="bi bi-cloud-upload me-1"></i>Save DB to GitHub
       </button>
+      <a href="/admin/bulletins" class="btn btn-outline-primary action-btn">
+        <i class="bi bi-file-earmark-text me-1"></i>Monthly Bulletins
+      </a>
       <a href="/admin/users" class="btn btn-outline-primary action-btn">
         <i class="bi bi-people me-1"></i>Manage Users
       </a>
@@ -3227,6 +3259,17 @@ def _nvd_scheduled_job():
         success = _nvd_job.get("success")
     print(f"⏰ [scheduler] Finished — success={success}")
 
+# ── Wire the monthly automotive bulletin feature (routes + generator) ──────
+_bulletin_api = _bulletin_mod.register(
+    app,
+    get_db_connection=get_db_connection,
+    call_ai_provider=call_ai_provider,
+    server_ai_config=_server_ai_config,
+    db_path=DB,
+    date_column=DATE_COLUMN,
+    admin_required=admin_required,
+)
+
 def _run_scheduler_loop():
     if _NVD_UPDATE_FREQUENCY == "weekly":
         schedule.every().monday.at("02:00", "UTC").do(_nvd_scheduled_job)
@@ -3234,6 +3277,9 @@ def _run_scheduler_loop():
     else:
         schedule.every().day.at("02:00", "UTC").do(_nvd_scheduled_job)
         print("⏰ [scheduler] NVD auto-update scheduled: daily (02:00 UTC)")
+    # Monthly bulletin: runs daily at 00:30 UTC, builds the prior month on the 1st
+    schedule.every().day.at("00:30", "UTC").do(_bulletin_api["monthly_job"])
+    print("⏰ [scheduler] Monthly bulletin: builds prior month on the 1st (00:30 UTC)")
     while True:
         try:
             schedule.run_pending()
