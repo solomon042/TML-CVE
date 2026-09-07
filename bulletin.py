@@ -15,6 +15,8 @@ month on the 1st (e.g. August's bulletin is generated on September 1st).
 """
 
 import re
+import os
+import glob
 import json
 import ipaddress
 import socket
@@ -363,12 +365,10 @@ def register(app, *, get_db_connection, call_ai_provider, server_ai_config,
                 "top_score": top_score, "kev": kev}
 
     # ---- build + store -----------------------------------------------------
-    def build_bulletin(month_key: str, max_incidents: int = 8):
-        print(f"📄 [bulletin] building {month_key} …")
-        cves = gather_cves(month_key)
-        incidents, inc_status = gather_incidents(month_key, max_incidents)
+    def _store(month_key, cves, incidents, inc_status, generated_at=None):
+        """Render a bulletin from prepared data and upsert it into the DB cache."""
+        generated_at = generated_at or datetime.now(timezone.utc)
         stats = compute_stats(cves)
-        generated_at = datetime.now(timezone.utc)
         html = render_bulletin(month_key, cves, incidents, stats, generated_at, inc_status)
         payload = {"month": month_key, "generated_at": generated_at.isoformat(),
                    "stats": stats, "cves": cves, "incidents": incidents,
@@ -387,9 +387,60 @@ def register(app, *, get_db_connection, call_ai_provider, server_ai_config,
             conn.commit()
         finally:
             conn.close()
-        print(f"✅ [bulletin] {month_key}: {len(cves)} CVEs, {len(incidents)} verified incidents ({inc_status})")
         return {"month": month_key, "cve_count": len(cves),
                 "incident_count": len(incidents), "incident_status": inc_status}
+
+    def build_bulletin(month_key: str, max_incidents: int = 8):
+        """AI/API path (optional): gather CVEs from the DB + AI-drafted incidents.
+        Only used when a server AI key is set; the file-based path below is the
+        default, no-API way to publish a bulletin."""
+        print(f"📄 [bulletin] building {month_key} (API path) …")
+        cves = gather_cves(month_key)
+        incidents, inc_status = gather_incidents(month_key, max_incidents)
+        res = _store(month_key, cves, incidents, inc_status)
+        print(f"✅ [bulletin] {month_key}: {res['cve_count']} CVEs, {res['incident_count']} incidents ({inc_status})")
+        return res
+
+    # ---- file-based path (default, no API key needed) ----------------------
+    # Bulletins committed to the repo under bulletins/<YYYY-MM>.json are the
+    # durable source of truth: created locally (e.g. with Claude Cowork), pushed
+    # to GitHub, deployed with the code, and loaded into the DB cache on boot.
+    _bulletins_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bulletins")
+
+    def load_from_files():
+        """Scan bulletins/*.json and upsert each into the DB cache. Returns a
+        list of {month, cve_count, incident_count} for what was loaded."""
+        loaded = []
+        if not os.path.isdir(_bulletins_dir):
+            return loaded
+        for path in sorted(glob.glob(os.path.join(_bulletins_dir, "*.json"))):
+            try:
+                data = json.load(open(path, encoding="utf-8"))
+                month_key = data.get("month") or os.path.splitext(os.path.basename(path))[0]
+                if not re.match(r"^\d{4}-\d{2}$", month_key):
+                    print(f"⚠️ [bulletin] skip {path}: bad/absent month")
+                    continue
+                cves = data.get("cves", []) or []
+                incidents = data.get("incidents", []) or []
+                # normalise incident source_domain if missing (for display)
+                for inc in incidents:
+                    if not inc.get("source_domain") and inc.get("source_url"):
+                        try:
+                            inc["source_domain"] = urlparse(inc["source_url"]).hostname or ""
+                        except Exception:
+                            inc["source_domain"] = ""
+                gen = data.get("generated_at")
+                try:
+                    gen_dt = datetime.fromisoformat(gen) if gen else None
+                except Exception:
+                    gen_dt = None
+                res = _store(month_key, cves, incidents, data.get("incident_status", "file"), gen_dt)
+                loaded.append(res)
+                print(f"📄 [bulletin] loaded {month_key} from file: "
+                      f"{res['cve_count']} CVEs, {res['incident_count']} incidents")
+            except Exception as e:
+                print(f"⚠️ [bulletin] failed to load {path}: {e}")
+        return loaded
 
     def get_bulletin(month_key: str):
         conn = sqlite3.connect(db_path)
@@ -413,7 +464,12 @@ def register(app, *, get_db_connection, call_ai_provider, server_ai_config,
 
     # ---- scheduler job -----------------------------------------------------
     def monthly_job():
-        """Run daily; only acts on the 1st (UTC). Builds the previous month."""
+        """Run daily; only acts on the 1st (UTC). Builds the previous month.
+        OFF by default — the standard flow is file-based (bulletins/<YYYY-MM>.json
+        committed to the repo). Set BULLETIN_AUTO_BUILD=1 to also auto-build from
+        the DB + AI on the 1st as a fallback when no file was pushed."""
+        if os.environ.get("BULLETIN_AUTO_BUILD", "").lower() not in ("1", "true", "yes"):
+            return
         today = datetime.now(timezone.utc).date()
         if today.day != 1:
             return
@@ -506,8 +562,30 @@ def register(app, *, get_db_connection, call_ai_provider, server_ai_config,
     def bulletin_status():
         return jsonify(_gen_state)
 
+    @app.route("/admin/bulletin/reload", methods=["POST", "GET"])
+    @admin_required
+    def bulletin_reload():
+        """Re-import bulletins/*.json committed with the code into the DB cache.
+        Use after a deploy that added/updated a month's file, without waiting for
+        a fresh boot."""
+        try:
+            loaded = load_from_files()
+            return jsonify({"ok": True, "loaded": loaded,
+                            "message": f"Loaded {len(loaded)} bulletin file(s)."})
+        except Exception as e:
+            return jsonify({"ok": False, "message": str(e)}), 500
+
+    # Load any repo-committed bulletin files into the DB cache at import time,
+    # so they are live on boot (durable across restarts — the DB itself is not).
+    try:
+        _pre = load_from_files()
+        if _pre:
+            print(f"📄 [bulletin] loaded {len(_pre)} bulletin file(s) from repo at startup")
+    except Exception as _e:
+        print(f"⚠️ [bulletin] startup file load failed: {_e}")
+
     return {"monthly_job": monthly_job, "build_bulletin": build_bulletin,
-            "prev_month_key": _prev_month_key}
+            "load_from_files": load_from_files, "prev_month_key": _prev_month_key}
 
 
 # ---------------------------------------------------------------------------

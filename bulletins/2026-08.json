@@ -1,0 +1,121 @@
+{
+ "month": "2026-08",
+ "generated_at": "2026-09-07T14:07:35.843640+00:00",
+ "cves": [
+  {
+   "cve_id": "CVE-2026-13214",
+   "score": 9.8,
+   "severity": "Critical",
+   "cwe": "CWE-787",
+   "published": "2026-08-25",
+   "source": "nvd",
+   "is_kev": false,
+   "matched": "OCPP",
+   "subsystem": "EV charging",
+   "description": "The OCPP 1.6 client in subsys/net/lib/ocpp/ocpp_j.c contains a stack buffer overflow in parse_getconfig_msg(). When handling a GetConfiguration request from the central system, the handler copied the attacker-controlled JSON \"key\" string into the caller's fixed 50-byte stack buffer (skey[CISTR50], declared in subsys/net/lib/ocpp/ocpp.c) using an unbounded strcpy(). The parsed key value points directly into the receive buffer, so its length is bounded only by the message size (CONFIG_OCPP_RECV_BUFFER_SIZE, default 2048).\n\nThe GetConfiguration message is delivered over the WebSocket connection that the charge point opens to its configured central system. The reader thread ocpp_wsreader() reads the message into ui->recv_buf and dispatches it to parse_getconfig_msg() via the PDU function table. An attacker who controls the central system endpoint, or a man-in-the-middle on an unencrypted connection, can send a GetConfiguration request whose \"key\" field exceeds 50 bytes and overflow the reader thread's stack with attacker-chosen bytes.\n\nThe consequence is a remotely triggerable stack smash on the OCPP reader thread: at minimum a denial of service, and plausibly remote code execution depending on build-time hardening such as stack canaries and MPU configuration. The fix replaces the strcpy() with a bounded strncpy(key, payload.key[0], CISTR50 - 1) followed by explicit NUL termination, matching the bounded copies already used by the sibling handlers.",
+   "ref": "https://github.com/zephyrproject-rtos/zephyr/commit/afbf880b04188ae53451a0ade4ac62b654fdff34"
+  },
+  {
+   "cve_id": "CVE-2026-80706",
+   "score": 7.8,
+   "severity": "High",
+   "cwe": "",
+   "published": "2026-08-28",
+   "source": "nvd",
+   "is_kev": false,
+   "matched": "softing",
+   "subsystem": "CAN / in-vehicle bus",
+   "description": "In the Linux kernel, the following vulnerability has been resolved:\n\ncan: softing: fw_parse(): validate firmware record spans\n\nfw_parse() reads a fixed record header, a firmware-provided payload,\nand a trailing checksum without knowing the end of the firmware blob. A\ntruncated record can therefore make those reads exceed the blob.\n\nThe same record also supplies addresses and lengths for writes into\nDPRAM. The generic loader uses wrap-prone mixed signed arithmetic for its\nbounds check, while the application loader does not bound the staging\ncopy at all.\n\nPass the firmware end to the parser and validate the full source record.\nUse a signed wide offset for generic DPRAM records and validate the\napplication staging span against the mapped DPRAM before copying.",
+   "ref": "https://git.kernel.org/stable/c/2ee477e541a6d5e434d6a4041c6b677ab42e1d82"
+  },
+  {
+   "cve_id": "CVE-2026-67560",
+   "score": 7.7,
+   "severity": "High",
+   "cwe": "CWE-121",
+   "published": "2026-08-28",
+   "source": "nvd",
+   "is_kev": false,
+   "matched": "Bendix",
+   "subsystem": "Brake / ABS",
+   "description": "Bendix EC80 Brake ECU\n is vulnerable to a stack-based buffer overflow, which may allow an \nattacker to crash the ECU. A crafted payload can then be used to \nremotely execute arbitrary code or inject arbitrary CAN bus traffic. \nThis could cause the loss of the ABS function, steering assist, \nspeedometer, and shifting.",
+   "ref": "https://github.com/cisagov/CSAF/blob/develop/csaf_files/OT/white/2026/icsa-26-237-05.json"
+  },
+  {
+   "cve_id": "CVE-2026-68967",
+   "score": 7.1,
+   "severity": "High",
+   "cwe": "CWE-787",
+   "published": "2026-08-28",
+   "source": "nvd",
+   "is_kev": false,
+   "matched": "Bendix",
+   "subsystem": "Brake / ABS",
+   "description": "Bendix EC80 Brake ECU is vulnerable to an out-of-bounds write, which could allow an attacker \nto deliver a payload that could establish an arbitrary write primitive, \nwhich could crash the ECU.",
+   "ref": "https://github.com/cisagov/CSAF/blob/develop/csaf_files/OT/white/2026/icsa-26-237-05.json"
+  },
+  {
+   "cve_id": "CVE-2026-10848",
+   "score": 7.0,
+   "severity": "High",
+   "cwe": "CWE-125",
+   "published": "2026-08-02",
+   "source": "nvd",
+   "is_kev": false,
+   "matched": "OCPP",
+   "subsystem": "EV charging",
+   "description": "The OCPP 1.6 client in subsys/net/lib/ocpp parsed inbound WAMP RPC frames in parse_rpc_msg() (subsys/net/lib/ocpp/ocpp_j.c) using a hand-rolled helper, extract_string_field(), that copied the message's uid and action fields with strncpy(out_buf, token + 1, outlen - 1) and then scanned the result with strchr(out_buf, '\"'). Because strncpy does not NUL-terminate the destination when the source is at least outlen - 1 (127) bytes long, the subsequent strchr reads past the 128-byte destination buffer into adjacent stack memory; if a \" byte is found beyond the buffer, a one-byte out-of-bounds NUL write also occurs. A related defect in extract_payload() runs strchr/strrchr over the receive buffer, which may not be NUL-terminated when a maximal-length frame fills it.\n\nThe parsed bytes come directly from the OCPP central-system server over a websocket: the reader thread fills recv_buf via websocket_recv_msg() and calls parse_rpc_msg() on each inbound DATA frame (subsys/net/lib/ocpp/ocpp.c). A malicious or compromised central server, or an on-path attacker (OCPP is commonly deployed over plain ws://), can send an RPC frame whose uid or action field is 127+ bytes with no closing quote, triggering the out-of-bounds access.\n\nThe primary impact is a remotely triggerable denial of service: the unbounded scan can fault on an unmapped page, and the stray NUL write can corrupt adjacent stack state. The over-read data is not reflected to the peer, so disclosure is limited. The feature is EXPERIMENTAL and must be explicitly enabled (CONFIG_OCPP). The fix replaces the manual parser with the bounds-respecting json_mixed_arr_parse() and copies the extracted uid with an explicitly NUL-terminated buffer, eliminating both over-reads.",
+   "ref": "https://github.com/zephyrproject-rtos/zephyr/commit/e500f7b81b5b8a867e28b2f4e59512cbfdd5ae75"
+  },
+  {
+   "cve_id": "CVE-2026-19696",
+   "score": 6.6,
+   "severity": "Medium",
+   "cwe": "CWE-787",
+   "published": "2026-08-13",
+   "source": "nvd",
+   "is_kev": false,
+   "matched": "Vector Informatik",
+   "subsystem": "Diagnostics / tooling",
+   "description": "Ixia IxVeriWave and Vector Informatik BLF file parser crashes in 4.6.0 to 4.6.7 allows denial of service on Windows",
+   "ref": "https://gitlab.com/wireshark/wireshark/-/work_items/21455"
+  },
+  {
+   "cve_id": "CVE-2026-13217",
+   "score": 5.9,
+   "severity": "Medium",
+   "cwe": "CWE-476",
+   "published": "2026-08-25",
+   "source": "nvd",
+   "is_kev": false,
+   "matched": "OCPP",
+   "subsystem": "EV charging",
+   "description": "The OCPP 1.6 client in subsys/net/lib/ocpp/ocpp.c reconstructs a session handle and PDU id from the uid field of a CALLRESULT message. In ocpp_process_server_msg() the code calls atoi(strtok_r(uid, \"-\", &tmp)) without checking the strtok_r return value. When the server-supplied uid is empty or contains no - delimiter, strtok_r() returns NULL and atoi(NULL) dereferences a NULL pointer, which is undefined behaviour.\n\nThe uid originates from network data: parse_rpc_msg() in subsys/net/lib/ocpp/ocpp_j.c JSON-parses a frame received from the OCPP central system over TCP/WebSocket and copies the server-controlled string into the local buffer. A malicious or compromised central system, or a man-in-the-middle on a non-TLS ws:// connection, can return a malformed uid to reach the defect. No authentication beyond the existing server connection (or MITM position) is required, and the reconstructed pointer is membership-validated by ocpp_session_is_valid(), so the impact is limited to the NULL dereference rather than arbitrary pointer use.\n\nOn Zephyr targets that trap access to address 0 (MMU/MPU platforms or CONFIG_NULL_POINTER_EXCEPTION_DETECTION), the dereference faults inside the OCPP reader thread and invokes the fatal handler, producing a remote denial of service of the charge point; on bare targets where address 0 is readable the call returns 0 and is benign, so the impact is availability-only and platform-conditional.\n\nThe applied fix guards only the first atoi(); the second strtok_r(NULL, \"-\", &tmp) followed by pdu = atoi(buf) in the same function remains unguarded and the identical NULL dereference is still reachable from the same network input when the uid has a first token but no second --delimited token. A complete fix should validate the second token as well.",
+   "ref": "https://github.com/zephyrproject-rtos/zephyr/commit/3a55507dd8011d877dc89eff949e70b42d45bacf"
+  },
+  {
+   "cve_id": "CVE-2026-71396",
+   "score": 5.3,
+   "severity": "Medium",
+   "cwe": "CWE-798",
+   "published": "2026-08-28",
+   "source": "nvd",
+   "is_kev": false,
+   "matched": "Bendix",
+   "subsystem": "Brake / ABS",
+   "description": "Bendix EC80 Brake ECU uses hard-coded credentials, which could allow an attacker to disable automatic traction control.",
+   "ref": "https://github.com/cisagov/CSAF/blob/develop/csaf_files/OT/white/2026/icsa-26-237-05.json"
+  }
+ ],
+ "incidents": [
+  {
+   "company": "General Motors",
+   "category": "other",
+   "severity": "Medium",
+   "date": "2026-08-27",
+   "summary": "GM joined 10 major tech and finance firms on an open letter warning that increasingly capable AI will make cyberattacks more widespread and sophisticated — the first automaker on such a cross-industry statement.",
+   "source_url": "https://gmauthority.com/blog/2026/08/gm-tech-companies-issue-ai-enabled-cyberattack-warning/",
+   "source_domain": "gmauthority.com"
+  }
+ ]
+}
