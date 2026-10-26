@@ -172,7 +172,8 @@ def _links_html(month):
     return (f'<div class="links"><a href="/">← CVE Dashboard</a>'
             f'<a href="/bulletin">Monthly CVE Bulletin</a>'
             f'<a href="/news/{month}">Incident archive · {_label(month, "%b %Y")}</a>'
-            f'<a href="/newsletter/{month}">Newsletter · {_label(month, "%b %Y")}</a></div>')
+            f'<a href="/newsletter/{month}">Newsletter · {_label(month, "%b %Y")}</a>'
+            f'<a href="/poster/{month}">Poster · {_label(month, "%b %Y")}</a></div>')
 
 
 def _page(title, sub, nav, body, foot, extra_css="", script=""):
@@ -349,6 +350,7 @@ def render_month(month, data, months, has_newsletter=False):
     tabs = "".join(f'<a class="tab{" on" if m == month else ""}" href="/news/{m}">'
                    f'{_label(m, "%b %Y")}</a>' for m in months)
     nl = (f'<a class="tab" href="/newsletter/{month}">📰 Newsletter</a>' if has_newsletter else "")
+    nl += f'<a class="tab" href="/poster/{month}">🖼 Poster</a>'
     nav = (f'<div class="nav"><span class="navlbl">Archive</span>{tabs}{nl}'
            f'<button class="tab printbtn" type="button">🖨 Print / PDF</button></div>')
 
@@ -442,6 +444,7 @@ def render_newsletter(month, nl, months, archive_months):
     tabs = "".join(f'<a class="tab{" on" if m == month else ""}" href="/newsletter/{m}">'
                    f'{_label(m, "%b %Y")}</a>' for m in months)
     arch = (f'<a class="tab" href="/news/{month}">🗂 Incident archive</a>'
+            f'<a class="tab" href="/poster/{month}">🖼 Poster</a>'
             if month in archive_months else "")
     nav = (f'<div class="nav"><span class="navlbl">Newsletter</span>{tabs}{arch}'
            f'<button class="tab printbtn" type="button">🖨 Print / PDF</button></div>'
@@ -518,6 +521,12 @@ def _message_page(title, msg, status=200):
 # Routes
 # ---------------------------------------------------------------------------
 def register(app):
+    import news_poster
+    news_poster.register(app, list_months=lambda: list_months(_ARCHIVE),
+                         get_month=lambda m: get_month(m, _ARCHIVE),
+                         page_fn=_page, label_fn=_label, links_fn=_links_html,
+                         message_fn=_message_page)
+
     def latest(folder, prefix, title):
         try:
             months = list_months(folder)
