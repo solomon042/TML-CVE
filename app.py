@@ -20,6 +20,7 @@ import secrets
 import threading
 import schedule
 import bulletin as _bulletin_mod
+import news_archive as _news_archive_mod
 from datetime import timedelta
 
 # ── LOAD .env FILE (if present) ─────────────────────────────────────────
@@ -3288,6 +3289,9 @@ _bulletin_api = _bulletin_mod.register(
     date_column=DATE_COLUMN,
     admin_required=admin_required,
 )
+
+# ── Public monthly archive of the automotive cyber-incident news feed ──────
+_news_archive_mod.register(app)
 
 def _run_scheduler_loop():
     if _NVD_UPDATE_FREQUENCY == "weekly":
