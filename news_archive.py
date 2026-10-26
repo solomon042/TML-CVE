@@ -140,7 +140,9 @@ _BASE_CSS = """
         display:flex;justify-content:space-between;align-items:center;gap:16px}
   .title{font:700 22px Arial;color:#fff}
   .sub{font:600 11px Arial;color:#9FC0E0;letter-spacing:.12em;text-transform:uppercase;margin-top:6px}
-  .brand{display:flex;align-items:center;gap:10px;flex-shrink:0}
+  .brand{display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap}
+  .brand .logo{background:#fff;border-radius:8px;padding:5px 9px;display:flex;margin-right:6px}
+  .brand .logo img{height:30px;width:auto;display:block}
   .brand .ini{width:38px;height:38px;border-radius:9px;background:#E08A1E;color:#0E2A47;
               font:700 15px Arial;display:flex;align-items:center;justify-content:center}
   .brand .nm{font:700 13px Arial;color:#fff;text-align:right}
@@ -163,7 +165,9 @@ _BASE_CSS = """
 
 
 def _brand_html():
-    return (f'<div class="brand"><div><div class="nm">{_BRAND["name"]}</div>'
+    return (f'<div class="brand"><span class="logo"><img src="/static/brand/vsecure-horizontal.png" '
+            f'alt="V.SECURE — Smart Vehicle Security"></span>'
+            f'<div><div class="nm">{_BRAND["name"]}</div>'
             f'<div class="tt">{_BRAND["title"]}</div></div>'
             f'<div class="ini">{_BRAND["initials"]}</div></div>')
 
@@ -525,7 +529,9 @@ def register(app):
     news_poster.register(app, list_months=lambda: list_months(_ARCHIVE),
                          get_month=lambda m: get_month(m, _ARCHIVE),
                          page_fn=_page, label_fn=_label, links_fn=_links_html,
-                         message_fn=_message_page)
+                         message_fn=_message_page,
+                         get_newsletter=lambda m: (get_month(m, _NEWSLETTER)
+                                                   if m in list_months(_NEWSLETTER) else None))
 
     def latest(folder, prefix, title):
         try:
