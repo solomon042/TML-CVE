@@ -200,7 +200,7 @@ def _page(title, sub, nav, body, foot, extra_css="", script=""):
 # ---------------------------------------------------------------------------
 _ARCHIVE_CSS = """
   .tiles{background:#0E2A47;padding:12px 18px 20px;display:grid;
-         grid-template-columns:repeat(6,1fr);gap:10px}
+         grid-template-columns:repeat(7,1fr);gap:8px}
   .tile{background:#13365C;border:1px solid #1E4A78;border-radius:10px;padding:14px 6px;text-align:center}
   .tile .n{font:700 24px Arial}
   .tile .l{font:600 9px Arial;letter-spacing:.07em;text-transform:uppercase;color:#9FC0E0;margin-top:4px}
@@ -213,6 +213,7 @@ _ARCHIVE_CSS = """
   .sec.red{color:#C0392B;border-bottom:2px solid #C0392B}
   .sec.blue{color:#1565C0;border-bottom:2px solid #BBD3EE;margin-top:26px}
   .sec.purple{color:#6D28D9;border-bottom:2px solid #D9CCF7;margin-top:26px}
+  .sec.crimson{color:#B42318;border-bottom:2px solid #F4C7C3;margin-top:26px}
   .none{background:#E6F4EC;border:1px solid #BFE3CD;border-radius:10px;padding:18px;
         text-align:center;font:700 15px Arial;color:#1E7A52;margin-bottom:16px}
   .card{border:1px solid #E2E8F0;border-left:5px solid;border-radius:10px;padding:14px 18px;margin-bottom:12px}
@@ -297,6 +298,10 @@ def _incident_card(r):
 def _vuln_card(v):
     sev = _sev(v)
     col = _SEV_COL.get(sev, "#5E6E84")
+    crit = v.get("category") == "critical"
+    accent = "#B42318" if crit else _TECH
+    kev = (f'<span class="pill" style="background:#B42318">ACTIVELY EXPLOITED · PATCH BY '
+           f'{escape(v["kev_due"])}</span>' if v.get("kev_due") else "")
     cves = "".join(f'<span class="cve">{escape(c)}</span>' for c in (v.get("cves") or [])[:5])
     vendor = f' · {escape(v["vendor"])}' if v.get("vendor") else ""
     n = v.get("report_count") or 1
@@ -305,28 +310,32 @@ def _vuln_card(v):
     link = _safe_url(v.get("link"))
     link_html = (f'<a class="src" href="{escape(link)}" target="_blank" '
                  f'rel="noopener noreferrer">Read source →</a>' if link else "")
-    tags = ["tech"] + (["crit"] if sev in ("critical", "high") else [])
+    group = "kev" if crit else "tech"
+    tags = [group] + (["crit"] if sev in ("critical", "high") and not crit else [])
+    where = "🏭 Where it matters" if crit else "🚗 In the vehicle"
     return f"""
-    <div class="card" data-group="tech" data-tags="{' '.join(tags)}" style="border-left-color:{_TECH}">
-      <div class="top" style="color:{_TECH}"><span class="pill" style="background:{col}">{escape(sev.upper() or "N/A")}</span>
+    <div class="card" data-group="{group}" data-tags="{' '.join(tags)}" style="border-left-color:{accent}">
+      <div class="top" style="color:{accent}"><span class="pill" style="background:{col}">{escape(sev.upper() or "N/A")}</span>{kev}
         <span style="text-transform:uppercase">{escape(v.get("domain") or "")}</span>
         <span class="when">· first reported {_date(v.get("first_seen"))}</span></div>
       <div class="org">{escape(v.get("technology") or "")}{vendor}</div>
       <div>{cves}</div>
       <div class="desc">{escape((v.get("summary") or "")[:400])}</div>
-      <div class="impact" style="border-left-color:{_TECH};background:#F6F2FE">
-        <span style="color:{_TECH}">🚗 In the vehicle:</span> {escape(v.get("why_relevant") or "")}<br>
-        <span style="color:{_TECH}">✔ Action:</span> {escape(v.get("action") or "")}</div>
+      <div class="impact" style="border-left-color:{accent};background:{'#FDF1F0' if crit else '#F6F2FE'}">
+        <span style="color:{accent}">{where}:</span> {escape(v.get("why_relevant") or "")}<br>
+        <span style="color:{accent}">✔ Action:</span> {escape(v.get("action") or "")}</div>
       {corro}{link_html}
     </div>"""
 
 
-def _summary_line(month, incidents, vulns):
-    if not incidents and not vulns:
+def _summary_line(month, incidents, vulns, kevs=()):
+    if not incidents and not vulns and not kevs:
         return ""
     parts = [f"<b>{len(incidents)}</b> incident{'s' if len(incidents) != 1 else ''}"]
     if vulns:
         parts.append(f"<b>{len(vulns)}</b> connected-car vulnerabilit{'y' if len(vulns) == 1 else 'ies'}")
+    if kevs:
+        parts.append(f"<b>{len(kevs)}</b> actively exploited")
     if incidents:
         types = Counter((r.get("incident_type") or "incident").lower() for r in incidents)
         top, cnt = types.most_common(1)[0]
@@ -347,8 +356,11 @@ def render_month(month, data, months, has_newsletter=False):
     recs.sort(key=lambda r: (_SEV_ORDER.get(_sev(r), 4), r.get("first_seen", "")))
     incidents = [r for r in recs if not r.get("historical")]
     info = [r for r in recs if r.get("historical")]
-    vulns = sorted(data.get("vulns", {}).values(),
-                   key=lambda r: (_SEV_ORDER.get(_sev(r), 4), r.get("first_seen", "")))
+    allv = sorted(data.get("vulns", {}).values(),
+                  key=lambda r: (_SEV_ORDER.get(_sev(r), 4), r.get("first_seen", "")))
+    vulns = [v for v in allv if v.get("category") != "critical"]
+    kevs = sorted([v for v in allv if v.get("category") == "critical"],
+                  key=lambda r: r.get("first_seen", ""), reverse=True)
     count = lambda s: sum(1 for r in incidents if _sev(r) == s)
 
     tabs = "".join(f'<a class="tab{" on" if m == month else ""}" href="/news/{m}">'
@@ -367,6 +379,7 @@ def render_month(month, data, months, has_newsletter=False):
             f'{tile(count("high"), "High", "#FFC04D")}'
             f'{tile(count("medium"), "Medium", "#E6C35C")}'
             f'{tile(len(vulns), "Car-tech", "#C4A8FF")}'
+            f'{tile(len(kevs), "Exploited vulns", "#FF8A80")}'
             f'{tile(len(info), "Info", "#7FB2E8")}</div>')
 
     filters = ('<div class="filters">'
@@ -375,9 +388,10 @@ def render_month(month, data, months, has_newsletter=False):
                '<button class="tab" data-f="supplier" type="button">Supplier</button>'
                '<button class="tab" data-f="crit" type="button">Critical + High</button>'
                + ('<button class="tab" data-f="tech" type="button">🚗 Car-tech</button>' if vulns else "")
+               + ('<button class="tab" data-f="kev" type="button">⚠ Exploited vulns</button>' if kevs else "")
                + '</div>')
 
-    body = _summary_line(month, incidents, vulns) + filters
+    body = _summary_line(month, incidents, vulns, kevs) + filters
     if incidents:
         body += (f'<div class="sec red" data-group="incident">Incidents first reported in '
                  f'{_label(month)} — {len(incidents)}</div>'
@@ -389,6 +403,10 @@ def render_month(month, data, months, has_newsletter=False):
         body += (f'<div class="sec purple" data-group="tech">🚗 Connected-car tech watch — '
                  f'{len(vulns)} vulnerabilit{"y" if len(vulns) == 1 else "ies"} in in-vehicle technology</div>'
                  + "".join(_vuln_card(v) for v in vulns))
+    if kevs:
+        body += (f'<div class="sec crimson" data-group="kev">⚠ Critical &amp; actively exploited '
+                 f'vulnerabilities — {len(kevs)} (CISA KEV)</div>'
+                 + "".join(_vuln_card(v) for v in kevs))
     if info:
         body += (f'<div class="sec blue" data-group="info">ℹ Information — older incidents back in the '
                  f'news ({len(info)}) · not new attacks</div>'

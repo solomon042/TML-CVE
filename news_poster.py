@@ -98,7 +98,7 @@ def facts(month, data):
         "short": datetime.strptime(month, "%Y-%m").strftime("%b %Y"),
         "n": len(new),
         "ransom": sum(1 for r in new if "ransom" in (r.get("incident_type") or "").lower()),
-        "vulns": len((data or {}).get("vulns", {})),
+        "vulns": sum(1 for v in (data or {}).get("vulns", {}).values() if v.get("category") != "critical"),
         "names": names[:3],
     }
 
@@ -382,6 +382,8 @@ def _icon(kind, c):
 def _icon_kind(r, kind):
     if kind == "tech":
         return "chip"
+    if kind == "kev":
+        return "hack"
     if kind == "info":
         return "clock"
     t = f"{r.get('incident_type', '')} {r.get('summary', '')} {r.get('title', '')}".lower()
@@ -408,16 +410,21 @@ def poster_board(month, data, nl=None):
     new = sorted([r for r in recs if not r.get("historical")],
                  key=lambda r: (_SEV.get((r.get("severity") or "").lower(), 4), r.get("first_seen", "")))
     info = sorted([r for r in recs if r.get("historical")], key=lambda r: r.get("first_seen", ""))
-    vulns = sorted((data or {}).get("vulns", {}).values(),
-                   key=lambda r: (_SEV.get((r.get("severity") or "").lower(), 4), r.get("first_seen", "")))
-    items = [("new", r) for r in new] + [("tech", v) for v in vulns] + [("info", r) for r in info]
+    allv = sorted((data or {}).get("vulns", {}).values(),
+                  key=lambda r: (_SEV.get((r.get("severity") or "").lower(), 4), r.get("first_seen", "")))
+    vulns = [v for v in allv if v.get("category") != "critical"]
+    kevs = sorted([v for v in allv if v.get("category") == "critical"],
+                  key=lambda r: r.get("first_seen", ""), reverse=True)
+    items = ([("new", r) for r in new] + [("tech", v) for v in vulns]
+             + [("kev", v) for v in kevs[:2]] + [("info", r) for r in info])
     shown, extra = items[:5], len(items) - 5
     crit_high = sum(1 for r in new if (r.get("severity") or "").lower() in ("critical", "high"))
 
     head = ((nl or {}).get("content") or {}).get("headline") or (
         f"{_plural(f['n'], 'new automotive cyber incident', 'new automotive cyber incidents')}"
         + (f", {f['ransom']} ransomware" if f["ransom"] else "")
-        + (f", {_plural(f['vulns'], 'connected-car flaw', 'connected-car flaws')}" if f["vulns"] else ""))
+        + (f", {_plural(f['vulns'], 'connected-car flaw', 'connected-car flaws')}" if f["vulns"] else "")
+        + (f", {len(kevs)} actively exploited vulnerabilities" if kevs else ""))
     hl = _wrap(head, 44, 2)
 
     defs = ('<defs><linearGradient id="bgb" x1="0" y1="0" x2="0" y2="1">'
@@ -437,9 +444,9 @@ def poster_board(month, data, nl=None):
             for i, ln in enumerate(hl)]
 
     tiles = [(f["n"], "NEW INCIDENTS", "#FF6B66" if f["n"] else "#FFFFFF"),
-             (crit_high, "CRITICAL + HIGH", "#FFA62B"),
              (f["ransom"], "RANSOMWARE", "#F2C744"),
-             (f["vulns"], "CAR-TECH FLAWS", _TECH_COL)]
+             (len(vulns), "CAR-TECH FLAWS", _TECH_COL),
+             (len(kevs), "EXPLOITED VULNS", "#FF8A80")]
     for i, (v, lab, col) in enumerate(tiles):
         tx = 60 + i * 225
         out.append(f'<rect x="{tx}" y="470" width="205" height="112" rx="16" fill="#13365C" stroke="#1E4A78" stroke-width="2"/>'
@@ -453,8 +460,15 @@ def poster_board(month, data, nl=None):
                    f'<text class="d" x="500" y="748" text-anchor="middle" font-size="24" fill="#CFEFDC">were reported in {x(f["label"])}. Stay alert.</text>')
     for kind, r in shown:
         sev = (r.get("severity") or "").lower()
-        col = _TECH_COL if kind == "tech" else _INFO_COL if kind == "info" else _SEV_COL.get(sev, "#9FB3C8")
-        if kind == "tech":
+        col = (_TECH_COL if kind == "tech" else "#FF8A80" if kind == "kev"
+               else _INFO_COL if kind == "info" else _SEV_COL.get(sev, "#9FB3C8"))
+        if kind == "kev":
+            name = r.get("technology") or (r.get("cves") or ["Vulnerability"])[0]
+            meta = (f"ACTIVELY EXPLOITED · {', '.join((r.get('cves') or [])[:1])} · "
+                    f"PATCH BY {_date_short(r.get('kev_due'))}")
+            body = r.get("why_relevant", "").replace("Actively exploited (CISA KEV). ", "") or r.get("summary", "")
+            pill = "KEV"
+        elif kind == "tech":
             name = r.get("technology") or "Connected-car vulnerability"
             cves = ", ".join((r.get("cves") or [])[:2])
             dom = (r.get("domain") or "").split(" (")[0].upper()
