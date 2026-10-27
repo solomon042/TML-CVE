@@ -58,6 +58,8 @@
             text-decoration: none; color: white;
         }
         .brand img { height: 30px; }
+        .brand img.brand-logo { height: 20px; width: auto; padding-right: 12px;
+                                border-right: 1px solid rgba(255,255,255,.25); }
         .header-right { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 
         /* ── TOP UPDATE BANNER ── */
@@ -924,7 +926,7 @@ async function admTestEmail() {
 <!-- ═══════════ NORMAL DASHBOARD ═══════════ -->
 <header class="app-header">
     <a href="/" class="brand">
-        <img src="{{ url_for('static', filename='Image/tata-logo.png') }}" alt="Logo">
+        <img src="{{ url_for('static', filename='brand/tata-cars-white.png') }}" alt="TATA.CARS" class="brand-logo">
         <span>TMPVL CVE Monitoring-Cybersecurity-E&E</span>
     </a>
     <div class="header-right">
