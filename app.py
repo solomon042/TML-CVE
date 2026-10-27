@@ -129,6 +129,69 @@ def _download_db_from_github():
 # Attempt download on startup (only runs if DB missing)
 _download_db_from_github()
 
+
+def _refresh_db_if_newer():
+    """The DB release asset is updated daily by the db-sync GitHub Actions
+    workflow (TML-CVE-Dashboard). Koyeb has no persistent disk, so instead of
+    updating in place we swap in the newer asset when one is published."""
+    from datetime import datetime, timezone
+    import shutil
+    repo  = os.environ.get("GITHUB_REPO", "")
+    tag   = os.environ.get("GITHUB_TAG", "v1.0.0")
+    name  = os.environ.get("GITHUB_ASSET", "nvd_database.db")
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not repo or not os.path.exists(DB):
+        return
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"token {token}"
+    try:
+        r = requests.get(f"https://api.github.com/repos/{repo}/releases/tags/{tag}",
+                         headers=headers, timeout=30)
+        r.raise_for_status()
+        asset = next((a for a in r.json().get("assets", []) if a.get("name") == name), None)
+        if not asset:
+            return
+        remote = asset["updated_at"]
+        marker = DB + ".asset"
+        local = open(marker).read().strip() if os.path.exists(marker) else None
+        if local == remote:
+            return
+        remote_dt = datetime.fromisoformat(remote.replace("Z", "+00:00"))
+        if local is None and datetime.fromtimestamp(os.path.getmtime(DB), timezone.utc) >= remote_dt:
+            open(marker, "w").write(remote)        # current file was downloaded after that upload
+            return
+        free = shutil.disk_usage(os.path.dirname(DB) or ".").free
+        if free < asset.get("size", 0) * 1.1:
+            print(f"⚠️ [db-refresh] newer DB available but only {free/1e9:.1f} GB free — skipped")
+            return
+        print(f"📥 [db-refresh] newer DB published {remote} — downloading")
+        tmp = DB + ".new"
+        dl = requests.get(asset["browser_download_url"], headers={"Authorization": f"token {token}"} if token else {},
+                          stream=True, timeout=600)
+        dl.raise_for_status()
+        with open(tmp, "wb") as f:
+            for chunk in dl.iter_content(chunk_size=1024 * 1024):
+                f.write(chunk)
+        c = sqlite3.connect(tmp)
+        n = c.execute("SELECT COUNT(*) FROM cves").fetchone()[0]
+        c.close()
+        if n < 300000:
+            os.remove(tmp)
+            print(f"⚠️ [db-refresh] downloaded DB has only {n:,} CVEs — kept current DB")
+            return
+        os.replace(tmp, DB)
+        open(marker, "w").write(remote)
+        try:
+            _build_stats_cache()
+        except Exception:
+            pass
+        print(f"✅ [db-refresh] switched to the newer DB — {n:,} CVEs")
+    except Exception as e:
+        print(f"⚠️ [db-refresh] {e}")
+        if os.path.exists(DB + ".new"):
+            os.remove(DB + ".new")
+
 def _ensure_app_settings_table():
     """Idempotent — called unconditionally at import time so it also runs
     under gunicorn (Procfile), not just `python app.py`."""
@@ -3294,7 +3357,15 @@ _bulletin_api = _bulletin_mod.register(
 _news_archive_mod.register(app)
 
 def _run_scheduler_loop():
-    if _NVD_UPDATE_FREQUENCY == "weekly":
+    # New CVEs arrive via the daily db-sync workflow (GitHub Actions) as a new
+    # release asset; check for it every 3 hours and once shortly after start-up.
+    schedule.every(3).hours.do(_refresh_db_if_newer)
+    threading.Timer(120, _refresh_db_if_newer).start()
+    print("⏰ [scheduler] DB refresh from GitHub release: every 3 h")
+    if os.environ.get("NVD_INAPP_SCHEDULE", "0") != "1":
+        print("⏰ [scheduler] in-app NVD auto-update off (db-sync workflow does it; "
+              "set NVD_INAPP_SCHEDULE=1 to re-enable)")
+    elif _NVD_UPDATE_FREQUENCY == "weekly":
         schedule.every().monday.at("02:00", "UTC").do(_nvd_scheduled_job)
         print("⏰ [scheduler] NVD auto-update scheduled: weekly (Mondays 02:00 UTC)")
     else:
