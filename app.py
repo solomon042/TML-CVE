@@ -3358,10 +3358,10 @@ _news_archive_mod.register(app)
 
 def _run_scheduler_loop():
     # New CVEs arrive via the daily db-sync workflow (GitHub Actions) as a new
-    # release asset; check for it every 3 hours and once shortly after start-up.
-    schedule.every(3).hours.do(_refresh_db_if_newer)
+    # release asset; check for it every 30 minutes and once shortly after start-up.
+    schedule.every(30).minutes.do(_refresh_db_if_newer)
     threading.Timer(120, _refresh_db_if_newer).start()
-    print("⏰ [scheduler] DB refresh from GitHub release: every 3 h")
+    print("⏰ [scheduler] DB refresh from GitHub release: every 30 min")
     if os.environ.get("NVD_INAPP_SCHEDULE", "0") != "1":
         print("⏰ [scheduler] in-app NVD auto-update off (db-sync workflow does it; "
               "set NVD_INAPP_SCHEDULE=1 to re-enable)")
