@@ -229,8 +229,8 @@ def poster_rings(month, f):
         + '<text class="d" x="110" y="205" font-size="74" font-weight="900" fill="#fff">SECURE VEHICLES</text>'
         + '<text class="d" x="110" y="279" font-size="74" font-weight="900" fill="#fff">START '
           '<tspan fill="#FFC93C" filter="url(#tglow)">WITH US</tspan></text>'
-        + '<rect x="812" y="52" width="148" height="128" rx="16" fill="#fff"/>'
-        + _logo_img("vsecure-logo.png", 822, 60, 128, 112)
+        + '<rect x="870" y="75" width="70" height="70" rx="15" fill="#E08A1E"/>'
+          '<text class="d" x="905" y="121" text-anchor="middle" font-size="28" font-weight="800" fill="#0E2A47">SR</text>'
         + eyes
         + "".join(_ring(cx_, cy_, c, lines, i) for i, (cx_, cy_, c, lines) in enumerate(_RINGS))
         + "".join(chips)
@@ -322,7 +322,8 @@ def poster_car(month, f):
           '<text class="d" x="98" y="1105" font-size="35" font-weight="800" fill="#fff" textLength="534" lengthAdjust="spacingAndGlyphs">PROTECT CONNECTED VEHICLES</text>'
         + chk
         + f'<text class="m" x="70" y="1372" font-size="16" fill="#64748B">{x(fact)}</text>'
-        + _logo_img("vsecure-horizontal.png", 690, 1336, 250, 45)
+        + '<rect x="880" y="1330" width="60" height="60" rx="13" fill="#E08A1E"/>'
+          '<text class="d" x="910" y="1370" text-anchor="middle" font-size="24" font-weight="800" fill="#0E2A47">SR</text>'
     )
     return _svg_open(f"Is your car talking to strangers? — {f['label']}") + body + "</svg>"
 
@@ -434,8 +435,8 @@ def poster_board(month, data, nl=None):
 
     out = [f'<rect width="{W}" height="{H}" fill="url(#bgb)"/>',
            _circuits(f"board-{month}", "91,168,255", True),
-           '<rect x="60" y="52" width="300" height="78" rx="14" fill="#fff"/>',
-           _logo_img("vsecure-horizontal.png", 74, 60, 272, 62),
+           '<rect x="60" y="56" width="72" height="72" rx="16" fill="#E08A1E"/>',
+           '<text class="d" x="96" y="104" text-anchor="middle" font-size="29" font-weight="800" fill="#0E2A47">SR</text>',
            '<text class="m" x="940" y="84" text-anchor="end" font-size="17" fill="#9FC0E0" letter-spacing="2.5">TMPVL E&amp;E · CYBER THREAT BOARD</text>',
            '<text class="d" x="940" y="114" text-anchor="end" font-size="19" font-weight="700" fill="#E08A1E">Solomon Raja · Cyber Security</text>',
            f'<text class="d" x="56" y="268" font-size="122" font-weight="900" style="font-stretch:64%" fill="#FFB547" filter="url(#ag)">{x(f["label"].split()[0].upper())}</text>',
